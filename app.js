@@ -50,7 +50,8 @@ let lastMX        = 0;
 let lastMY        = 0;
 let lastTouchDist = 0;
 
-let nodes     = [];  // { id, x, y, adj[] }
+let nodes       = [];  // { id, x, y, adj[], isRoundabout }
+let roundabouts = new Set(); // indeks node yang merupakan bundaran
 let edges     = [];  // { a, b }
 let startNode = 0;
 let endNode   = 1;
@@ -67,6 +68,19 @@ let animRunning = false;
 let animPaused  = false;
 let selectedType = 'car';
 
+// ===================== 3D STATE =====================
+let is3D = false;
+let cam3D = {
+  theta: -Math.PI / 4,
+  phi:    Math.PI / 3,
+  r:      3200,
+  tx:     0,
+  tz:     0,
+  fov:    55,
+};
+let drag3D = false, drag3DPan = false;
+let last3DMX = 0, last3DMY = 0;
+
 // ===================== COLOR THEME =====================
 function isDark() {
   return window.matchMedia && window.matchMedia('(prefers-color-scheme:dark)').matches;
@@ -75,30 +89,478 @@ function isDark() {
 function getColors() {
   const d = isDark();
   return {
-    bg:          d ? '#1a1a18' : '#ddd8ce',
-    road:        d ? '#3a3a36' : '#b0ab9f',
-    roadSurf:    d ? '#4e4e48' : '#ccc8bc',
-    roadMark:    d ? '#6a6a60' : '#9a9488',
-    nodeDot:     d ? '#5a5a54' : '#b8b3a8',
-    grid:        d ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.03)',
-    // tata kota
-    building:    d ? '#2e2e2c' : '#a09888',
-    buildingTop: d ? '#3a3a36' : '#b8ae9e',
-    buildingWin: d ? '#4a6080' : '#7aa0c0',
-    park:        d ? '#1e2e1a' : '#b8d4a8',
-    parkTree:    d ? '#2a4020' : '#88b878',
-    water:       d ? '#0e1e2e' : '#a8c4d4',
-    waterRipple: d ? '#142030' : '#90b0c4',
-    sidewalk:    d ? '#302e2a' : '#c8c0b0',
-    // markers & objects
-    flagG:       '#1D9E75',
-    flagR:       '#D85A30',
-    pathLine:    '#BA7517',
-    objCar:      '#378ADD',
-    objMoto:     '#D85A30',
-    objBike:     '#1D9E75',
-    objPed:      '#7F77DD',
+    bg:               d ? '#242f3e' : '#e8f0e0',
+    grid:             'rgba(0,0,0,0.04)',
+    road:             d ? '#38414e' : '#a8b0a8',
+    roadSurf:         d ? '#485060' : '#d4d8d4',
+    roadMark:         '#ffffff',
+    nodeDot:          d ? '#38414e' : '#a8b0a8',
+    sidewalk:         d ? '#4a4030' : '#e0d8c0',
+    building:         d ? '#2a3040' : '#c0b8a8',
+    buildingTop:      d ? '#363d50' : '#d0c8b8',
+    buildingWin:      d ? '#5080c0' : '#88b8e8',
+    buildingShadow:   'rgba(0,0,0,0.15)',
+    park:             d ? '#1a3020' : '#98c888',
+    parkTree:         d ? '#1e4028' : '#60a850',
+    parkGround:       d ? '#162818' : '#a8d890',
+    water:            d ? '#17263c' : '#90b8d8',
+    waterRipple:      d ? '#1e3048' : '#a8cce8',
+    waterShine:       d ? '#243858' : '#b8daf0',
+    roundaboutRing:   d ? '#38414e' : '#a8b0a8',
+    roundaboutIsland: d ? '#1a3020' : '#98c888',
+    roundaboutTree:   d ? '#1e4028' : '#60a850',
+    flagG:        '#22cc44',
+    flagR:        '#ee2222',
+    pathLine:     '#4a90e2',
+    objCar:       '#3366ee',
+    objCar2:      '#ee3333',
+    objCar3:      '#ee9900',
+    objCar4:      '#22aa44',
+    objMoto:      '#ff6622',
+    objBike:      '#22bb44',
+    objPed:       '#9944ee',
   };
+}
+
+// ===================== 3D ENGINE: MATRIX & PROJECTION =====================
+/**
+ * Pipeline transformasi 3D:
+ *   P_screen = project( ViewMatrix * P_world )
+ *
+ * ViewMatrix dibentuk dengan lookAt():
+ *   forward = normalize(eye - target)
+ *   right   = normalize(cross(up, forward))
+ *   up_real = cross(forward, right)
+ *
+ * Projection Matrix (perspektif):
+ *   f = 1 / tan(fov/2)
+ *   menghasilkan efek perspektif — objek jauh terlihat kecil
+ *
+ * Orbit Camera:
+ *   eye.x = tx + r * sin(phi) * cos(theta)
+ *   eye.y = r  * cos(phi)
+ *   eye.z = tz + r * sin(phi) * sin(theta)
+ */
+
+// Normalisasi vektor 3D
+function vec3norm(v) {
+  const len = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+  return len > 0 ? [v[0]/len, v[1]/len, v[2]/len] : [0,0,0];
+}
+
+// Cross product vektor 3D
+function vec3cross(a, b) {
+  return [
+    a[1]*b[2] - a[2]*b[1],
+    a[2]*b[0] - a[0]*b[2],
+    a[0]*b[1] - a[1]*b[0],
+  ];
+}
+
+// Dot product vektor 3D
+function vec3dot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+
+/**
+ * mat4lookAt(eye, target, up)
+ * Membentuk View Matrix — mengubah world space ke camera space.
+ */
+function mat4lookAt(eye, target, up) {
+  const f = vec3norm([eye[0]-target[0], eye[1]-target[1], eye[2]-target[2]]);
+  const r = vec3norm(vec3cross(up, f));
+  const u = vec3cross(f, r);
+  return [
+     r[0],  r[1],  r[2], -vec3dot(r, eye),
+     u[0],  u[1],  u[2], -vec3dot(u, eye),
+     f[0],  f[1],  f[2], -vec3dot(f, eye),
+     0,     0,     0,     1,
+  ];
+}
+
+/**
+ * mat4perspective(fovDeg, aspect, near, far)
+ * Projection Matrix perspektif.
+ * f = 1 / tan(fov/2)
+ */
+function mat4perspective(fovDeg, aspect, near, far) {
+  const f = 1 / Math.tan(fovDeg * Math.PI / 360);
+  return [
+    f/aspect, 0,  0,                     0,
+    0,        f,  0,                     0,
+    0,        0,  (far+near)/(near-far), (2*far*near)/(near-far),
+    0,        0, -1,                     0,
+  ];
+}
+
+/**
+ * project3D(px, py, pz)
+ * Proyeksikan titik world 3D ke koordinat layar.
+ * Pipeline: World -> Camera (View) -> Clip (Proj) -> NDC -> Screen
+ */
+function project3D(px, py, pz) {
+  const V = currentViewMatrix;
+  const P = currentProjMatrix;
+  // View transform
+  const cx = V[0]*px + V[1]*py + V[2]*pz  + V[3];
+  const cy = V[4]*px + V[5]*py + V[6]*pz  + V[7];
+  const cz = V[8]*px + V[9]*py + V[10]*pz + V[11];
+  // Projection
+  const clipX = P[0]*cx + P[2]*cz;
+  const clipY = P[5]*cy + P[6]*cz;
+  const clipW = P[10]*cz + P[11];
+  const clipWW= -cz;
+  if (clipWW <= 0.01) return { x:0, y:0, w:0, visible:false };
+  // NDC -> Screen
+  const ndcX =  clipX / clipWW;
+  const ndcY = -clipY / clipWW;
+  return {
+    x: (ndcX + 1) * 0.5 * W,
+    y: (ndcY + 1) * 0.5 * H,
+    w: clipWW,
+    visible: ndcX > -1.8 && ndcX < 1.8 && ndcY > -1.8 && ndcY < 1.8,
+  };
+}
+
+// Cache matrix per frame
+let currentViewMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+let currentProjMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+
+/**
+ * updateCamera3D()
+ * Hitung posisi eye dari parameter orbit, update View & Projection matrix.
+ * Orbit: eye mengorbit titik (tx,0,tz) pada jarak r
+ */
+function updateCamera3D() {
+  const { theta, phi, r, tx, tz, fov } = cam3D;
+  const sinPhi = Math.sin(phi), cosPhi = Math.cos(phi);
+  const sinThe = Math.sin(theta), cosThe = Math.cos(theta);
+  const eye    = [tx + r*sinPhi*cosThe, r*cosPhi, tz + r*sinPhi*sinThe];
+  const target = [tx, 0, tz];
+  currentViewMatrix = mat4lookAt(eye, target, [0,1,0]);
+  currentProjMatrix = mat4perspective(fov, W/H, 10, 20000);
+}
+
+// World 2D (wx,wy) -> World 3D, pusatkan di origin
+function w3(wx, wy) { return [wx - MAP_W/2, 0, wy - MAP_H/2]; }
+
+// Proyeksikan titik peta 2D ke layar di ketinggian h
+function projH(wx, wy, h) {
+  const p = w3(wx, wy);
+  return project3D(p[0], -h, p[2]);
+}
+function proj2D(wx, wy) { return projH(wx, wy, 0); }
+
+// Gambar kurva Bezier kuadratik 3D pada ketinggian h
+function bezier3D(ax, ay, cpx, cpy, bx, by, h, color, lw) {
+  ctx.beginPath();
+  let first = true;
+  for (let t = 0; t <= 1; t += 0.04) {
+    const u = 1 - t;
+    const sx = u*u*ax + 2*u*t*cpx + t*t*bx;
+    const sy = u*u*ay + 2*u*t*cpy + t*t*by;
+    const p  = projH(sx, sy, h);
+    if (!p.visible) { first = true; continue; }
+    if (first) { ctx.moveTo(p.x, p.y); first = false; }
+    else ctx.lineTo(p.x, p.y);
+  }
+  ctx.strokeStyle = color;
+  ctx.lineWidth   = lw;
+  ctx.lineCap     = 'round';
+  ctx.stroke();
+}
+
+// Gambar polygon 3D (array {x,y} world) pada ketinggian h
+function poly3D(pts, h, fill, stroke, lw) {
+  const prj = pts.map(p => projH(p.x, p.y, h));
+  if (!prj.some(p => p.visible)) return;
+  ctx.beginPath();
+  ctx.moveTo(prj[0].x, prj[0].y);
+  for (let i = 1; i < prj.length; i++) ctx.lineTo(prj[i].x, prj[i].y);
+  ctx.closePath();
+  if (fill)   { ctx.fillStyle   = fill;   ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw||1; ctx.stroke(); }
+}
+
+// Utility: gelapkan/terangkan warna hex
+function shadeColor(hex, amt) {
+  const n = parseInt(hex.replace('#',''), 16);
+  const r = Math.min(255, Math.max(0, (n>>16)       + amt));
+  const g = Math.min(255, Math.max(0, ((n>>8)&0xff) + amt));
+  const b = Math.min(255, Math.max(0, (n&0xff)      + amt));
+  return `rgb(${r},${g},${b})`;
+}
+
+/**
+ * extrudeBuilding3D(b, col)
+ * Ekstrusi bangunan 2D ke 3D menggunakan Painter's Algorithm.
+ * Menggambar 3 face: right face (gelap), front face (sedang), top face (terang)
+ * Tinggi = floors * 35 world unit
+ */
+function extrudeBuilding3D(b, col) {
+  const pad = 6;
+  const bx = b.x+pad, by = b.y+pad, bw = b.w-pad*2, bh = b.h-pad*2;
+  if (bw < 8 || bh < 8) return;
+  const height = (b.floors || 1) * 35;
+
+  const C = [
+    {x:bx,    y:by   }, {x:bx+bw, y:by   },
+    {x:bx+bw, y:by+bh}, {x:bx,    y:by+bh},
+  ];
+  const pals = [
+    ['#9aa8c0','#8090a8','#6a7888'],
+    ['#b09080','#a08070','#887060'],
+    ['#90a080','#809070','#687858'],
+    ['#b0a870','#a09860','#888050'],
+  ];
+  const [topC, frontC, rightC] = pals[Math.abs(Math.round(bx*0.01+by*0.013))%4];
+
+  // Right face: C[1]-C[2]
+  const rf  = [C[1],C[2]].map(c => proj2D(c.x, c.y));
+  const rfh = [C[1],C[2]].map(c => projH(c.x, c.y, height));
+  if (rf.some(p=>p.visible)||rfh.some(p=>p.visible)) {
+    ctx.beginPath();
+    ctx.moveTo(rf[0].x,rf[0].y); ctx.lineTo(rf[1].x,rf[1].y);
+    ctx.lineTo(rfh[1].x,rfh[1].y); ctx.lineTo(rfh[0].x,rfh[0].y);
+    ctx.closePath(); ctx.fillStyle=rightC; ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.12)'; ctx.lineWidth=0.5; ctx.stroke();
+  }
+
+  // Front face: C[2]-C[3]
+  const ff  = [C[2],C[3]].map(c => proj2D(c.x, c.y));
+  const ffh = [C[2],C[3]].map(c => projH(c.x, c.y, height));
+  if (ff.some(p=>p.visible)||ffh.some(p=>p.visible)) {
+    ctx.beginPath();
+    ctx.moveTo(ff[0].x,ff[0].y); ctx.lineTo(ff[1].x,ff[1].y);
+    ctx.lineTo(ffh[1].x,ffh[1].y); ctx.lineTo(ffh[0].x,ffh[0].y);
+    ctx.closePath(); ctx.fillStyle=frontC; ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.12)'; ctx.lineWidth=0.5; ctx.stroke();
+    // Jendela
+    const rows = Math.min(b.floors||1, 5);
+    const cols = Math.max(1, Math.round(Math.abs(ffh[0].x-ffh[1].x)/14));
+    for (let wr=0; wr<rows; wr++) {
+      for (let wc=0; wc<cols; wc++) {
+        const wx = ffh[1].x + (wc+0.5)*(ffh[0].x-ffh[1].x)/cols;
+        const wy = ffh[1].y + (0.15 + wr*0.75/rows)*(ff[1].y-ffh[1].y);
+        const ws = Math.max(2, Math.abs(ffh[0].x-ffh[1].x)/cols*0.45);
+        ctx.fillStyle = ((wr*7+wc*13)%5!==0) ? 'rgba(180,220,255,0.85)' : 'rgba(0,0,0,0.3)';
+        ctx.fillRect(wx-ws/2, wy-ws*0.7, ws, ws*1.4);
+      }
+    }
+  }
+
+  // Top face (atap)
+  const top = C.map(c => projH(c.x, c.y, height));
+  if (top.some(p=>p.visible)) {
+    ctx.beginPath();
+    ctx.moveTo(top[0].x,top[0].y);
+    top.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));
+    ctx.closePath(); ctx.fillStyle=topC; ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.15)'; ctx.lineWidth=0.5; ctx.stroke();
+  }
+}
+
+// Gambar bendera 3D
+function drawFlag3D(wx, wy, color) {
+  const base = proj2D(wx, wy);
+  const top  = projH(wx, wy, 120);
+  const tip  = projH(wx+60, wy, 80);
+  const bot  = projH(wx+60, wy, 50);
+  if (!base.visible) return;
+  ctx.beginPath(); ctx.moveTo(base.x,base.y); ctx.lineTo(top.x,top.y);
+  ctx.strokeStyle='#888'; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(top.x,top.y); ctx.lineTo(tip.x,tip.y);
+  ctx.lineTo(bot.x,bot.y); ctx.closePath();
+  ctx.fillStyle=color; ctx.fill();
+}
+
+// Gambar kendaraan 3D (ekstrusi kotak)
+function drawMovingObj3D(obj, col) {
+  const base = proj2D(obj.x, obj.y);
+  if (!base.visible) return;
+  const bodyH = obj.type==='car' ? 28 : obj.type==='moto' ? 20 : obj.type==='bike' ? 15 : 35;
+  const hl    = obj.type==='ped' ? 8  : obj.type==='bike' ? 10 : 15;
+  const hw    = obj.type==='ped' ? 8  : obj.type==='bike' ? 6  : 10;
+  const cc    = [col.objCar,col.objCar2,col.objCar3,col.objCar4][(obj.colorIdx||0)%4];
+  const dx = Math.cos(obj.angle), dz = Math.sin(obj.angle);
+  const rx = -dz, rz = dx;
+  const C3 = [
+    [obj.x+dx*hl+rx*hw, obj.y+dz*hl+rz*hw],
+    [obj.x+dx*hl-rx*hw, obj.y+dz*hl-rz*hw],
+    [obj.x-dx*hl-rx*hw, obj.y-dz*hl-rz*hw],
+    [obj.x-dx*hl+rx*hw, obj.y-dz*hl+rz*hw],
+  ];
+  const bot = C3.map(c=>proj2D(c[0],c[1]));
+  const top = C3.map(c=>projH(c[0],c[1],bodyH));
+  if (!top.some(p=>p.visible)) return;
+  // Front
+  ctx.beginPath();
+  ctx.moveTo(bot[0].x,bot[0].y); ctx.lineTo(bot[1].x,bot[1].y);
+  ctx.lineTo(top[1].x,top[1].y); ctx.lineTo(top[0].x,top[0].y);
+  ctx.closePath(); ctx.fillStyle=cc; ctx.fill();
+  // Side
+  ctx.beginPath();
+  ctx.moveTo(bot[1].x,bot[1].y); ctx.lineTo(bot[2].x,bot[2].y);
+  ctx.lineTo(top[2].x,top[2].y); ctx.lineTo(top[1].x,top[1].y);
+  ctx.closePath(); ctx.fillStyle=shadeColor(cc,-30); ctx.fill();
+  // Roof
+  ctx.beginPath();
+  top.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+  ctx.closePath(); ctx.fillStyle=shadeColor(cc,20); ctx.fill();
+  // Kaca depan (car only)
+  if (obj.type==='car') {
+    const wf = C3.map(c=>projH(c[0],c[1],bodyH*0.5));
+    ctx.beginPath();
+    ctx.moveTo(wf[0].x,wf[0].y); ctx.lineTo(wf[1].x,wf[1].y);
+    ctx.lineTo(top[1].x,top[1].y); ctx.lineTo(top[0].x,top[0].y);
+    ctx.closePath(); ctx.fillStyle='rgba(180,225,255,0.75)'; ctx.fill();
+  }
+}
+
+/**
+ * drawMap3D() — render seluruh peta dalam mode 3D
+ * Menggunakan Painter's Algorithm: sort by Z, gambar terjauh dulu
+ */
+function drawMap3D() {
+  const col = getColors();
+  updateCamera3D();
+
+  // Background
+  const isDk = isDark();
+  ctx.fillStyle = isDk ? '#1a2030' : '#c8dfc8';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+  // 1. Trotoar
+  for (const e of edges) {
+    const A=nodes[e.a], B=nodes[e.b], cp=getEdgeCP(e);
+    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 0, col.sidewalk, 28);
+  }
+  // 2. Border jalan
+  for (const e of edges) {
+    const A=nodes[e.a], B=nodes[e.b], cp=getEdgeCP(e);
+    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 1, col.road, 22);
+  }
+  // 3. Aspal
+  for (const e of edges) {
+    const A=nodes[e.a], B=nodes[e.b], cp=getEdgeCP(e);
+    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 2, col.roadSurf, 16);
+  }
+  // 4. Marka
+  for (const e of edges) {
+    const A=nodes[e.a], B=nodes[e.b], cp=getEdgeCP(e);
+    const pts=[];
+    for (let t=0;t<=1;t+=0.05) {
+      const u=1-t;
+      pts.push({x:u*u*A.x+2*u*t*cp.x+t*t*B.x, y:u*u*A.y+2*u*t*cp.y+t*t*B.y});
+    }
+    let draw=true, acc=0;
+    for (let i=1;i<pts.length;i++) {
+      const p1=projH(pts[i-1].x,pts[i-1].y,3);
+      const p2=projH(pts[i].x,pts[i].y,3);
+      if (!p1.visible||!p2.visible) continue;
+      acc+=Math.hypot(p2.x-p1.x,p2.y-p1.y);
+      if (draw) {
+        ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y);
+        ctx.strokeStyle=col.roadMark; ctx.lineWidth=1.5; ctx.stroke();
+      }
+      if (acc>8) { draw=!draw; acc=0; }
+    }
+  }
+
+  // 5. Taman & Air (flat)
+  for (const b of cityBlocks) {
+    const C=[{x:b.x,y:b.y},{x:b.x+b.w,y:b.y},{x:b.x+b.w,y:b.y+b.h},{x:b.x,y:b.y+b.h}];
+    if (b.type==='park') {
+      poly3D(C, 1, col.park, col.parkTree, 0.5);
+      // Pohon sederhana
+      const rng = makeRng(b.treeSeed||42);
+      for (let k=0;k<Math.min(b.treeCount||3,4);k++) {
+        const tx=b.x+rng()*b.w, ty=b.y+rng()*b.h;
+        const tBase=proj2D(tx,ty), tTop=projH(tx,ty,60);
+        if (tBase.visible) {
+          ctx.beginPath(); ctx.moveTo(tBase.x,tBase.y); ctx.lineTo(tTop.x,tTop.y);
+          ctx.strokeStyle='#7a5a28'; ctx.lineWidth=2; ctx.stroke();
+          ctx.beginPath(); ctx.arc(tTop.x,tTop.y,Math.max(4,8),0,Math.PI*2);
+          ctx.fillStyle=col.parkTree; ctx.fill();
+        }
+      }
+    } else if (b.type==='water') {
+      poly3D(C, 1, col.water, col.waterRipple, 0.5);
+    }
+  }
+
+  // 6. Bangunan (sort Painter's Algorithm: terjauh dulu)
+  const buildings = cityBlocks.filter(b=>b.type==='building');
+  buildings.sort((a,b) => {
+    const da = proj2D(a.x+a.w/2, a.y+a.h/2).w;
+    const db = proj2D(b.x+b.w/2, b.y+b.h/2).w;
+    return da - db;
+  });
+  for (const b of buildings) extrudeBuilding3D(b, col);
+
+  // 7. Bundaran
+  for (const n of nodes) {
+    if (!n.isRoundabout) continue;
+    const r=n.roundaboutRadius, ri=r*0.42;
+    const SEGS=16;
+    const outer=[], inner=[];
+    for (let k=0;k<SEGS;k++) {
+      const a=(k/SEGS)*Math.PI*2;
+      outer.push({x:n.x+Math.cos(a)*r,  y:n.y+Math.sin(a)*r });
+      inner.push({x:n.x+Math.cos(a)*ri, y:n.y+Math.sin(a)*ri});
+    }
+    poly3D(outer, 2, col.roadSurf, col.road, 0.5);
+    poly3D(inner, 4, col.park, col.parkTree, 0.5);
+    const tTop=projH(n.x, n.y, ri*3);
+    const tBase=proj2D(n.x, n.y);
+    if (tBase.visible) {
+      ctx.beginPath(); ctx.moveTo(tBase.x,tBase.y); ctx.lineTo(tTop.x,tTop.y);
+      ctx.strokeStyle='#7a5a28'; ctx.lineWidth=1.5; ctx.stroke();
+      ctx.beginPath(); ctx.arc(tTop.x,tTop.y,Math.max(3,ri*0.3),0,Math.PI*2);
+      ctx.fillStyle=col.parkTree; ctx.fill();
+    }
+  }
+
+  // 8. Persimpangan
+  for (const n of nodes) {
+    if (n.isRoundabout) continue;
+    const SEGS=10, pts=[], pts2=[];
+    for (let k=0;k<SEGS;k++) {
+      const a=(k/SEGS)*Math.PI*2;
+      pts.push({x:n.x+Math.cos(a)*9, y:n.y+Math.sin(a)*9});
+      pts2.push({x:n.x+Math.cos(a)*7,y:n.y+Math.sin(a)*7});
+    }
+    poly3D(pts,  2, col.road, null, 0);
+    poly3D(pts2, 2, col.roadSurf, null, 0);
+  }
+
+  // 9. Jalur A*
+  if (pathPts.length>1) {
+    for (let i=1;i<pathPts.length;i++) {
+      const p1=projH(pathPts[i-1].x,pathPts[i-1].y,5);
+      const p2=projH(pathPts[i].x,  pathPts[i].y,  5);
+      if (!p1.visible||!p2.visible) continue;
+      ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y);
+      ctx.strokeStyle=col.pathLine; ctx.lineWidth=2.5;
+      ctx.globalAlpha=0.85; ctx.stroke(); ctx.globalAlpha=1;
+    }
+  }
+
+  // 10. Bendera & kendaraan
+  if (nodes[startNode]) drawFlag3D(nodes[startNode].x, nodes[startNode].y, col.flagG);
+  if (nodes[endNode])   drawFlag3D(nodes[endNode].x,   nodes[endNode].y,   col.flagR);
+  if (movingObj) drawMovingObj3D(movingObj, col);
+
+  // 11. HUD info kamera
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(10, H-38, 220, 26);
+  ctx.fillStyle = '#fff';
+  ctx.font = '11px monospace';
+  ctx.fillText(
+    `3D | theta:${(cam3D.theta*180/Math.PI).toFixed(0)}\u00b0 phi:${(cam3D.phi*180/Math.PI).toFixed(0)}\u00b0 r:${cam3D.r.toFixed(0)}`,
+    16, H-21
+  );
 }
 
 // ===================== UTILITIES =====================
@@ -115,6 +577,82 @@ function shuffle(arr) {
 
 function edgeExists(a, b) {
   return edges.some(e => (e.a === a && e.b === b) || (e.a === b && e.b === a));
+}
+
+// ===================== BRESENHAM LINE DRAWING =====================
+/**
+ * bresenhamLine(x1, y1, x2, y2, color, lineWidth)
+ *
+ * Menggambar garis lurus dari (x1,y1) ke (x2,y2) menggunakan
+ * Algoritma Bresenham (1962) — murni operasi integer tanpa
+ * perkalian float atau fungsi trigonometri.
+ *
+ * Prinsip:
+ *  - Hitung Δx = |x2-x1|, Δy = |y2-y1|
+ *  - Tentukan arah langkah sx, sy (+1 atau -1)
+ *  - Jika Δy > Δx, tukar peran x dan y (swap) agar selalu
+ *    melangkah di sumbu dominan
+ *  - Decision parameter awal: p = 2*Δy - Δx
+ *  - Setiap langkah:
+ *      jika p >= 0 → geser sumbu minor, p -= 2*Δx
+ *      selalu      → geser sumbu mayor, p += 2*Δy
+ *
+ * Setiap "piksel" digambar sebagai fillRect kecil di canvas,
+ * sehingga murni implementasi manual tanpa ctx.lineTo.
+ *
+ * @param {number} x1        - Koordinat x titik awal (world space)
+ * @param {number} y1        - Koordinat y titik awal (world space)
+ * @param {number} x2        - Koordinat x titik akhir (world space)
+ * @param {number} y2        - Koordinat y titik akhir (world space)
+ * @param {string} color     - Warna garis (CSS color string)
+ * @param {number} lineWidth - Ketebalan "piksel" garis (default 1)
+ */
+function bresenhamLine(x1, y1, x2, y2, color, lineWidth = 1) {
+  // Bulatkan ke integer — Bresenham bekerja di ruang piksel diskret
+  let x = Math.round(x1);
+  let y = Math.round(y1);
+  const ex = Math.round(x2);
+  const ey = Math.round(y2);
+
+  // Δx dan Δy selalu positif
+  let dx = Math.abs(ex - x);
+  let dy = Math.abs(ey - y);
+
+  // Arah langkah: +1 atau -1
+  const sx = ex >= x ? 1 : -1;
+  const sy = ey >= y ? 1 : -1;
+
+  // Jika Δy > Δx, kita "tukar" peran sumbu
+  // agar selalu bergerak pada sumbu yang lebih dominan
+  let swapped = false;
+  if (dy > dx) {
+    [dx, dy] = [dy, dx]; // tukar nilai
+    swapped = true;
+  }
+
+  // Decision parameter awal
+  let p = 2 * dy - dx;
+
+  ctx.fillStyle = color;
+
+  // Loop sebanyak Δx langkah (sumbu dominan)
+  for (let i = 0; i <= dx; i++) {
+    // Gambar "piksel" pada posisi (x, y) saat ini
+    // fillRect menggambar kotak kecil sebesar lineWidth
+    ctx.fillRect(x - lineWidth / 2, y - lineWidth / 2, lineWidth, lineWidth);
+
+    if (p >= 0) {
+      // Geser sumbu minor
+      if (swapped) x += sx;
+      else         y += sy;
+      p -= 2 * dx;
+    }
+
+    // Selalu geser sumbu mayor
+    if (swapped) y += sy;
+    else         x += sx;
+    p += 2 * dy;
+  }
 }
 
 function addEdge(a, b) {
@@ -140,12 +678,13 @@ function makeRng(seed) {
  * 4. Generate blok tata kota di antara ruas jalan
  */
 function generateMap() {
-  nodes      = [];
-  edges      = [];
-  cityBlocks = [];
+  nodes       = [];
+  edges       = [];
+  cityBlocks  = [];
+  roundabouts = new Set();
 
-  const cols = 14;
-  const rows = 11;
+  const cols = 9;
+  const rows = 7;
   const gw   = MAP_W / (cols + 1);
   const gh   = MAP_H / (rows + 1);
 
@@ -154,9 +693,10 @@ function generateMap() {
     for (let c = 0; c < cols; c++) {
       nodes.push({
         id:  r * cols + c,
-        x:   gw * (c + 1) + rnd(-gw * 0.3, gw * 0.3),
-        y:   gh * (r + 1) + rnd(-gh * 0.3, gh * 0.3),
+        x:   gw * (c + 1) + rnd(-gw * 0.2, gw * 0.2),
+        y:   gh * (r + 1) + rnd(-gh * 0.2, gh * 0.2),
         adj: [],
+        isRoundabout: false,
       });
     }
   }
@@ -182,6 +722,9 @@ function generateMap() {
     }
   }
 
+  // Deteksi dan tandai node perempatan sebagai bundaran
+  detectRoundabouts();
+
   // Generate blok tata kota
   generateCityBlocks(cols, rows, gw, gh);
 
@@ -189,16 +732,102 @@ function generateMap() {
 }
 
 // ===================== CITY BLOCKS GENERATION =====================
+// ===================== ROUNDABOUT DETECTION =====================
 /**
- * generateCityBlocks()
- * Mengisi ruang antara ruas jalan dengan tiga jenis blok:
- * - Bangunan (gedung bertingkat, ruko, rumah)
- * - Taman kota
- * - Perairan (danau, kolam)
+ * detectRoundabouts()
+ * Mendeteksi node perempatan (adj.length >= 4) dan menandainya
+ * sebagai bundaran. Radius bundaran dihitung dari rata-rata
+ * jarak ke tetangga terdekat dibagi 4, agar proporsional
+ * dengan kepadatan jalan di sekitarnya.
  *
- * Blok ditempatkan di tengah-tengah sel grid (antara 4 node),
- * sehingga tidak menimpa jalan dan terlihat logis.
+ * Node yang terlalu berdekatan satu sama lain tidak dijadikan
+ * bundaran (jarak antar bundaran minimal 2x radius) agar
+ * tidak tumpang tindih secara visual.
  */
+function detectRoundabouts() {
+  roundabouts = new Set();
+  // Reset semua node
+  for (const n of nodes) n.isRoundabout = false;
+
+  // Pilih hanya node perempatan TEPAT 4 arah (paling cocok jadi bundaran)
+  // Jika kurang dari 5, tambah dari node adj>=5 dengan adj terbanyak
+  const MAX_ROUNDABOUTS = 6;
+
+  // Sort kandidat: prioritaskan adj==4, lalu adj==5, dst
+  const candidates = nodes
+    .filter(n => n.adj.length >= 4)
+    .sort((a, b) => {
+      // adj==4 paling diutamakan (perempatan 4 arah)
+      const da = Math.abs(a.adj.length - 4);
+      const db = Math.abs(b.adj.length - 4);
+      return da - db;
+    });
+
+  const placed = [];
+  const MIN_DIST = 800; // jarak minimum antar bundaran (world unit)
+
+  for (const n of candidates) {
+    if (placed.length >= MAX_ROUNDABOUTS) break;
+
+    // Cek jarak ke bundaran yang sudah ada
+    const tooClose = placed.some(p => Math.hypot(p.x - n.x, p.y - n.y) < MIN_DIST);
+    if (tooClose) continue;
+
+    // Hitung radius proporsional dengan jarak ke tetangga
+    let totalDist = 0;
+    for (const adjIdx of n.adj) {
+      const nb = nodes[adjIdx];
+      totalDist += Math.hypot(nb.x - n.x, nb.y - n.y);
+    }
+    const avgDist = totalDist / n.adj.length;
+    n.roundaboutRadius = Math.min(10, avgDist * 0.06);
+    n.isRoundabout = true;
+    roundabouts.add(n.id);
+    placed.push(n);
+  }
+}
+
+// ===================== DRAWING: ROUNDABOUT =====================
+/**
+ * drawRoundabout(node)
+ * Menggambar visual bundaran pada node perempatan.
+ * Menggunakan midpointCircle() untuk:
+ *   1. Lingkaran luar (batas bundaran) — tepi jalan
+ *   2. Lingkaran tengah (pulau bundaran) — area hijau/taman
+ *   3. Garis putus-putus busur — marka jalan bundaran
+ *
+ * Radius bundaran sudah dihitung di detectRoundabouts().
+ */
+function drawRoundabout(node, col) {
+  const cx = node.x;
+  const cy = node.y;
+  const r  = node.roundaboutRadius;
+  const ri = r * 0.42; // radius pulau tengah
+
+  // 1. Permukaan jalan bundaran (aspal)
+  midpointCircle(cx, cy, r, col.roadSurf, true);
+
+  // 2. Trotoar/border luar bundaran (krem)
+  midpointCircle(cx, cy, r,     col.road, false);
+  midpointCircle(cx, cy, r + 1, col.road, false);
+  midpointCircle(cx, cy, r + 2, col.sidewalk, false);
+
+  // 3. Pulau tengah bundaran — hijau taman
+  midpointCircle(cx, cy, ri, col.park, true);
+
+  // 4. Border pulau tengah
+  midpointCircle(cx, cy, ri,     col.road, false);
+  midpointCircle(cx, cy, ri + 1, col.road, false);
+
+  // 5. Pohon di pulau tengah
+  const treeR = Math.max(4, Math.round(ri * 0.4));
+  midpointCircle(cx, cy, treeR, col.parkTree, true);
+
+  // 6. Highlight pohon (lingkaran kecil terang di tengah)
+  const hlR = Math.max(2, Math.round(treeR * 0.45));
+  midpointCircle(cx, cy - Math.round(hlR * 0.3), hlR, col.park, true);
+}
+
 function generateCityBlocks(cols, rows, gw, gh) {
   const rngType = makeRng(Math.floor(Math.random() * 9999));
   const rngSize = makeRng(Math.floor(Math.random() * 9999));
@@ -220,7 +849,7 @@ function generateCityBlocks(cols, rows, gw, gh) {
       const cellH = Math.min(Math.abs(n01.y - n00.y), Math.abs(n11.y - n10.y));
 
       // Sisakan margin dari jalan (~30% tiap sisi)
-      const margin  = 0.28;
+      const margin  = 0.38;   // margin lebih jauh dari jalan
       const maxBW   = cellW * (1 - margin * 2);
       const maxBH   = cellH * (1 - margin * 2);
       if (maxBW < 30 || maxBH < 30) continue;
@@ -267,8 +896,8 @@ function generateCityBlocks(cols, rows, gw, gh) {
 
 function generateBuildingCluster(cx, cy, maxW, maxH, count, rngSize, rngOff) {
   if (count === 1) {
-    const bw = maxW * (0.45 + rngSize() * 0.35);
-    const bh = maxH * (0.45 + rngSize() * 0.35);
+    const bw = maxW * (0.35 + rngSize() * 0.30);  // max 65% maxW
+    const bh = maxH * (0.35 + rngSize() * 0.30);
     const floors = rndInt(1, 6);
     cityBlocks.push({
       type: 'building',
@@ -323,55 +952,338 @@ function randomPositions() {
   resetButtons();
   selectedType = document.getElementById('obj-select').value;
   movingObj = {
-    type:  selectedType,
-    x:     nodes[startNode].x,
-    y:     nodes[startNode].y,
-    angle: 0,
+    type:     selectedType,
+    x:        nodes[startNode].x,
+    y:        nodes[startNode].y,
+    angle:    0,
+    colorIdx: Math.floor(Math.random() * 4),  // warna tetap selama perjalanan
   };
 }
 
-// ===================== PATHFINDING (BFS) =====================
+// ===================== PATHFINDING (A*) =====================
+/**
+ * heuristic(a, b)
+ * Fungsi heuristik untuk A* — menggunakan jarak Euclidean
+ * antara node a dan node b sebagai estimasi biaya tersisa.
+ *
+ * h(n) = √((xn - xtujuan)² + (yn - ytujuan)²)
+ *
+ * Heuristik ini bersifat admissible (tidak pernah melebih-lebihkan
+ * jarak sebenarnya) sehingga A* selalu menemukan jalur optimal.
+ *
+ * @param {object} a - Node asal { x, y }
+ * @param {object} b - Node tujuan { x, y }
+ * @returns {number} Jarak Euclidean antara a dan b
+ */
+function heuristic(a, b) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/**
+ * computePath()
+ * Implementasi algoritma A* (A-Star) untuk mencari jalur terpendek
+ * dari startNode ke endNode pada graf berbobot (jarak Euclidean).
+ *
+ * Fungsi evaluasi: f(n) = g(n) + h(n)
+ *   g(n) = biaya nyata dari start ke node n (akumulasi jarak)
+ *   h(n) = estimasi biaya dari n ke tujuan (heuristik Euclidean)
+ *   f(n) = total estimasi biaya jalur melewati n
+ *
+ * Struktur data:
+ *   openSet  = array node yang ditemukan tapi belum dieksplorasi
+ *              → diurutkan berdasarkan f terkecil (min-heap manual)
+ *   closedSet = Set node yang sudah selesai dieksplorasi
+ *
+ * Kompleksitas: O(E log V) dengan binary heap, O(V²) implementasi ini
+ */
 function computePath() {
-  const prev = new Array(nodes.length).fill(-1);
-  const vis  = new Array(nodes.length).fill(false);
-  const q    = [startNode];
-  vis[startNode] = true;
-  while (q.length) {
-    const cur = q.shift();
-    if (cur === endNode) break;
-    for (const nb of nodes[cur].adj) {
-      if (!vis[nb]) { vis[nb] = true; prev[nb] = cur; q.push(nb); }
+  const N = nodes.length;
+
+  // g[i] = biaya nyata dari start ke node i
+  // Diinisialisasi Infinity (belum ditemukan)
+  const g = new Array(N).fill(Infinity);
+
+  // f[i] = g[i] + h(i, end) — total estimasi biaya
+  const f = new Array(N).fill(Infinity);
+
+  // prev[i] = node sebelumnya dalam jalur terpendek (untuk rekonstruksi)
+  const prev = new Array(N).fill(-1);
+
+  // closedSet: node yang sudah selesai dieksplorasi
+  const closed = new Array(N).fill(false);
+
+  // Inisialisasi node awal
+  g[startNode] = 0;
+  f[startNode] = heuristic(nodes[startNode], nodes[endNode]);
+
+  // openSet: array pasangan [f_value, nodeIndex]
+  // Diimplementasikan sebagai array yang selalu diurutkan
+  const openSet = [[f[startNode], startNode]];
+
+  while (openSet.length > 0) {
+    // Ambil node dengan f terkecil (front of sorted array)
+    // → sort ascending berdasarkan f[0]
+    openSet.sort((a, b) => a[0] - b[0]);
+    const [, current] = openSet.shift();
+
+    // Jika sudah sampai tujuan, hentikan pencarian
+    if (current === endNode) break;
+
+    // Tandai current sebagai selesai dieksplorasi
+    closed[current] = true;
+
+    // Eksplorasi semua tetangga (neighbor) dari current
+    for (const neighbor of nodes[current].adj) {
+      if (closed[neighbor]) continue; // skip node yang sudah selesai
+
+      // Hitung g_baru = g[current] + jarak Euclidean ke neighbor
+      const g_baru = g[current] + heuristic(nodes[current], nodes[neighbor]);
+
+      if (g_baru < g[neighbor]) {
+        // Jalur baru ini lebih baik → update
+        prev[neighbor]  = current;
+        g[neighbor]     = g_baru;
+        f[neighbor]     = g_baru + heuristic(nodes[neighbor], nodes[endNode]);
+
+        // Tambahkan ke openSet jika belum ada
+        const alreadyIn = openSet.some(([, idx]) => idx === neighbor);
+        if (!alreadyIn) {
+          openSet.push([f[neighbor], neighbor]);
+        }
+      }
     }
   }
+
+  // Rekonstruksi jalur dari prev[]
+  // Telusuri balik dari endNode ke startNode
   path = [];
   let cur = endNode;
-  while (cur !== -1) { path.unshift(cur); cur = prev[cur]; }
+  while (cur !== -1) {
+    path.unshift(cur);
+    cur = prev[cur];
+  }
+
+  // Jika path[0] bukan startNode berarti tidak ada jalur
+  if (path[0] !== startNode) path = [startNode, endNode];
+
   buildPathPts();
 }
 
 // ===================== BEZIER =====================
-function getEdgeControlPoint(A, B, seedIdx) {
+// getEdgeControlPoint: formula IDENTIK dengan getEdgeCP
+// menggunakan ID node (a.id, b.id) sebagai seed
+// sehingga kurva jalur A* persis sama dengan kurva jalan yang digambar
+function getEdgeControlPoint(A, B) {
   const mx   = (A.x + B.x) / 2;
   const my   = (A.y + B.y) / 2;
   const perp = Math.atan2(B.y - A.y, B.x - A.x) + Math.PI / 2;
-  const seed = ((seedIdx * 7919) % 100 - 50) * 0.7;
+  // Seed identik dengan getEdgeCP: (a*31 + b*17) % 100
+  const ia   = A.id !== undefined ? A.id : 0;
+  const ib   = B.id !== undefined ? B.id : 0;
+  const seed = (((ia * 31 + ib * 17) % 100) - 50) * 0.8;
   return { x: mx + Math.cos(perp) * seed, y: my + Math.sin(perp) * seed };
 }
 
+/**
+ * buildPathPts()
+ * Membangun array titik animasi sepanjang jalur A*.
+ * Jika jalur melewati node bundaran, sisipkan titik-titik
+ * busur setengah lingkaran (arc) sebagai pengganti Bezier lurus.
+ *
+ * Prinsip arc bundaran:
+ *   theta_masuk  = atan2(prev.y - cy, prev.x - cx)
+ *   theta_keluar = atan2(next.y - cy, next.x - cx)
+ *   Sweep searah jarum jam dari theta_masuk ke theta_keluar
+ *   x(t) = cx + r * cos(t),  y(t) = cy + r * sin(t)
+ */
 function buildPathPts() {
   pathPts = [];
+
   for (let i = 0; i < path.length - 1; i++) {
-    const A  = nodes[path[i]];
-    const B  = nodes[path[i + 1]];
-    const cp = getEdgeControlPoint(A, B, i);
-    for (let t = 0; t <= 1; t += 0.02) {
-      const u = 1 - t;
-      pathPts.push({
-        x: u * u * A.x + 2 * u * t * cp.x + t * t * B.x,
-        y: u * u * A.y + 2 * u * t * cp.y + t * t * B.y,
-      });
+    const A = nodes[path[i]];
+    const B = nodes[path[i + 1]];
+
+    if (B.isRoundabout && i + 2 < path.length) {
+      const C  = nodes[path[i + 2]];
+      const cx = B.x, cy = B.y;
+      const r  = B.roundaboutRadius;
+
+      // Sudut arah datang (A ke B) dan arah pergi (B ke C)
+      const dirIn  = Math.atan2(B.y - A.y, B.x - A.x);  // arah masuk
+      const dirOut = Math.atan2(C.y - B.y, C.x - B.x);  // arah keluar
+
+      // Sudut relatif: berapa derajat harus belok
+      // Positif = searah jarum jam (kanan), Negatif = berlawanan (kiri)
+      let relAngle = dirOut - dirIn;
+      // Normalkan ke range (-PI, PI]
+      while (relAngle >  Math.PI) relAngle -= Math.PI * 2;
+      while (relAngle < -Math.PI) relAngle += Math.PI * 2;
+
+      // LOGIKA GMAPS:
+      // Belok KIRI (relAngle < -0.35 rad / ~20 derajat kiri)
+      //   → kendaraan langsung belok tanpa memutar bundaran
+      // Belok LURUS atau KANAN (relAngle >= -0.35)
+      //   → kendaraan memutar bundaran searah jarum jam
+      const turnLeft = relAngle < -0.35;
+
+      if (turnLeft) {
+        // ── BELOK KIRI: Bezier langsung A → B → C ──
+        // Tidak melewati bundaran, langsung potong pojok
+        const cp1 = getEdgeControlPoint(A, B, i);
+        for (let t = 0; t <= 1; t += 0.02) {
+          const u = 1 - t;
+          pathPts.push({
+            x: u*u*A.x + 2*u*t*cp1.x + t*t*B.x,
+            y: u*u*A.y + 2*u*t*cp1.y + t*t*B.y,
+          });
+        }
+        const cp2 = getEdgeControlPoint(B, C, i + 1);
+        for (let t = 0; t <= 1; t += 0.02) {
+          const u = 1 - t;
+          pathPts.push({
+            x: u*u*B.x + 2*u*t*cp2.x + t*t*C.x,
+            y: u*u*B.y + 2*u*t*cp2.y + t*t*C.y,
+          });
+        }
+
+      } else {
+        // ── BELOK KANAN / LURUS: Putar bundaran searah jarum jam ──
+        // Sudut dari pusat bundaran ke titik masuk dan keluar
+        const angleIn  = Math.atan2(A.y - cy, A.x - cx);
+        const angleOut = Math.atan2(C.y - cy, C.x - cx);
+
+        // Titik masuk & keluar di tepi bundaran
+        const entryX = cx + Math.cos(angleIn)  * r;
+        const entryY = cy + Math.sin(angleIn)  * r;
+        const exitX  = cx + Math.cos(angleOut) * r;
+        const exitY  = cy + Math.sin(angleOut) * r;
+
+        // Bezier A → entry bundaran
+        const cp1 = getEdgeControlPoint(A, { x: entryX, y: entryY }, i);
+        for (let t = 0; t <= 1; t += 0.025) {
+          const u = 1 - t;
+          pathPts.push({
+            x: u*u*A.x + 2*u*t*cp1.x + t*t*entryX,
+            y: u*u*A.y + 2*u*t*cp1.y + t*t*entryY,
+          });
+        }
+
+        // Arc bundaran searah jarum jam dari angleIn ke angleOut
+        let sweep = angleOut - angleIn;
+        if (sweep <= 0) sweep += Math.PI * 2;  // pastikan searah jarum jam
+        sweep = Math.min(sweep, Math.PI * 1.5); // max 270 derajat
+        if (sweep < 0.3) sweep = 0.3;           // min arc agar terlihat
+
+        const steps = Math.max(10, Math.round(sweep * 12));
+        for (let k = 0; k <= steps; k++) {
+          const theta = angleIn + sweep * (k / steps);
+          pathPts.push({
+            x: cx + Math.cos(theta) * r,
+            y: cy + Math.sin(theta) * r,
+          });
+        }
+
+        // Bezier exit bundaran → C
+        const cp2 = getEdgeControlPoint({ x: exitX, y: exitY }, C, i + 1);
+        for (let t = 0; t <= 1; t += 0.025) {
+          const u = 1 - t;
+          pathPts.push({
+            x: u*u*exitX + 2*u*t*cp2.x + t*t*C.x,
+            y: u*u*exitY + 2*u*t*cp2.y + t*t*C.y,
+          });
+        }
+      }
+
+      i += 1;  // skip node C karena sudah dihandle
+
+    } else {
+      // Segmen biasa: kurva Bezier kuadratik A → B
+      const cp = getEdgeControlPoint(A, B, i);
+      for (let t = 0; t <= 1; t += 0.02) {
+        const u = 1 - t;
+        pathPts.push({
+          x: u*u*A.x + 2*u*t*cp.x + t*t*B.x,
+          y: u*u*A.y + 2*u*t*cp.y + t*t*B.y,
+        });
+      }
     }
   }
+}
+
+// ===================== DASHED LINE MANUAL =====================
+/**
+ * dashedCurve(pts, dashLen, gapLen, color, lineWidth)
+ * Menggambar garis putus-putus sepanjang kurva tanpa ctx.setLineDash().
+ *
+ * Prinsip:
+ *   1. Terima array titik kurva yang sudah disampling (pts[])
+ *   2. Hitung jarak kumulatif antar titik (arc length parameterization)
+ *   3. Gambar segmen garis hanya pada interval [dashLen] piksel,
+ *      lalu skip interval [gapLen] piksel — bergantian
+ *
+ * Keunggulan vs setLineDash():
+ *   - Kontrol penuh atas distribusi dash di sepanjang kurva
+ *   - Dash selalu mulai dari titik awal kurva secara konsisten
+ *   - Dapat dikombinasikan dengan teknik rendering lain
+ *
+ * @param {Array}  pts       - Array titik { x, y } sepanjang kurva
+ * @param {number} dashLen   - Panjang setiap segmen garis (world unit)
+ * @param {number} gapLen    - Panjang setiap celah (world unit)
+ * @param {string} color     - Warna garis
+ * @param {number} lineWidth - Ketebalan garis
+ */
+function dashedCurve(pts, dashLen, gapLen, color, lineWidth) {
+  if (pts.length < 2) return;
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth   = lineWidth;
+  ctx.lineCap     = 'round';
+
+  let drawing    = true;   // true = sedang gambar dash, false = gap
+  let remaining  = dashLen; // sisa panjang fase saat ini
+
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  let penDown = true; // apakah pena sedang menggambar
+
+  for (let i = 1; i < pts.length; i++) {
+    const dx   = pts[i].x - pts[i - 1].x;
+    const dy   = pts[i].y - pts[i - 1].y;
+    let   segLen = Math.sqrt(dx * dx + dy * dy);
+    if (segLen === 0) continue;
+
+    // Arah vektor satuan segmen ini
+    const ux = dx / segLen;
+    const uy = dy / segLen;
+
+    let traveled = 0; // jarak yang sudah ditempuh dalam segmen ini
+
+    while (traveled < segLen) {
+      const step = Math.min(remaining, segLen - traveled);
+      const nx   = pts[i - 1].x + ux * (traveled + step);
+      const ny   = pts[i - 1].y + uy * (traveled + step);
+
+      if (drawing) {
+        if (!penDown) { ctx.moveTo(pts[i - 1].x + ux * traveled, pts[i - 1].y + uy * traveled); penDown = true; }
+        ctx.lineTo(nx, ny);
+      } else {
+        ctx.moveTo(nx, ny);
+        penDown = false;
+      }
+
+      traveled  += step;
+      remaining -= step;
+
+      if (remaining <= 0) {
+        // Ganti fase: dash ↔ gap
+        drawing   = !drawing;
+        remaining = drawing ? dashLen : gapLen;
+      }
+    }
+  }
+  ctx.stroke();
 }
 
 function getEdgeCP(e) {
@@ -380,7 +1292,8 @@ function getEdgeCP(e) {
   const mx   = (A.x + B.x) / 2;
   const my   = (A.y + B.y) / 2;
   const perp = Math.atan2(B.y - A.y, B.x - A.x) + Math.PI / 2;
-  const seed = (((e.a * 31 + e.b * 17) % 100) - 50) * 0.6;
+  // Faktor 0.8 = kurva natural smooth, tidak terlalu ekstrem
+  const seed = (((e.a * 31 + e.b * 17) % 100) - 50) * 0.8;
   return { x: mx + Math.cos(perp) * seed, y: my + Math.sin(perp) * seed };
 }
 
@@ -407,57 +1320,62 @@ function drawCityBlocks() {
  * - Atap (garis tipis di atas)
  */
 function drawBuilding(b, col) {
-  const { x, y, w, h, floors } = b;
+  const pad = 12; // padding dari tepi blok ke bangunan
+  const x = b.x + pad, y = b.y + pad;
+  const w = b.w - pad * 2, h = b.h - pad * 2;
+  if (w < 10 || h < 10) return;
+  const { floors } = b;
 
-  // Bayangan bangunan (kesan kedalaman)
-  ctx.fillStyle = 'rgba(0,0,0,0.08)';
-  ctx.fillRect(x + 4, y + 4, w, h);
+  // Warna bangunan bervariasi berdasarkan lantai (biru-abu, merah bata, krem)
+  const palette = [
+    ['#8090a8','#98a8c0'],   // biru-abu
+    ['#a08070','#b09080'],   // coklat/bata
+    ['#90a080','#a0b090'],   // hijau-abu
+    ['#b0a070','#c0b080'],   // krem
+  ];
+  const [bodyColor, roofColor] = palette[Math.abs(Math.round(b.x + b.y)) % palette.length];
+
+  // Bayangan bangunan (kesan kedalaman, offset ke kanan-bawah)
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.fillRect(x + 5, y + 5, w, h);
 
   // Badan bangunan
-  ctx.fillStyle = col.building;
+  ctx.fillStyle = bodyColor;
   ctx.fillRect(x, y, w, h);
 
-  // Variasi warna badan berdasarkan jumlah lantai
+  // Variasi gelap berdasarkan jumlah lantai
   const shade = Math.min(floors / 8, 1);
-  ctx.fillStyle = `rgba(0,0,0,${shade * 0.25})`;
+  ctx.fillStyle = `rgba(0,0,0,${shade * 0.2})`;
   ctx.fillRect(x, y, w, h);
 
-  // Garis tepi bangunan
-  ctx.strokeStyle = isDark() ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.18)';
+  // Garis tepi bangunan (border tipis)
+  ctx.strokeStyle = 'rgba(0,0,0,0.3)';
   ctx.lineWidth   = 1;
   ctx.strokeRect(x, y, w, h);
 
-  // Atap (garis tipis di atas)
-  ctx.fillStyle = col.buildingTop;
-  ctx.fillRect(x, y, w, Math.max(4, h * 0.08));
+  // Atap (strip warna di atas)
+  ctx.fillStyle = roofColor;
+  ctx.fillRect(x, y, w, Math.max(5, h * 0.1));
 
-  // Jendela — grid kecil di badan bangunan
+  // Jendela — grid kecil
   const winCols = Math.max(1, Math.floor(w / 14));
-  const winRows = Math.max(1, Math.min(floors, Math.floor(h / 12)));
-  const winW    = Math.max(4, (w - 6) / winCols - 3);
-  const winH    = Math.max(3, (h - 14) / winRows - 3);
+  const winRows = Math.max(1, Math.min(floors, Math.floor(h / 14)));
+  const winW    = Math.max(4, (w - 8) / winCols - 3);
+  const winH    = Math.max(3, (h - 16) / winRows - 4);
   const startX  = x + 4;
-  const startY  = y + Math.max(6, h * 0.1);
+  const startY  = y + Math.max(8, h * 0.12);
 
   for (let wr = 0; wr < winRows; wr++) {
     for (let wc = 0; wc < winCols; wc++) {
-      const wx = startX + wc * ((w - 4) / winCols);
-      const wy = startY + wr * ((h - startY + y) / winRows);
-      // Beberapa jendela menyala (acak tapi deterministik via posisi)
+      const wx  = startX + wc * ((w - 4) / winCols);
+      const wy  = startY + wr * ((h - 16) / winRows);
       const lit = ((wr * 7 + wc * 13) % 5) !== 0;
-      ctx.fillStyle = lit ? col.buildingWin : 'rgba(0,0,0,0.3)';
+      ctx.fillStyle = lit ? col.buildingWin : 'rgba(0,0,0,0.35)';
       ctx.fillRect(wx, wy, winW, winH);
     }
   }
 }
 
-/**
- * drawPark()
- * Render taman dengan:
- * - Area hijau
- * - Pohon-pohon (lingkaran hijau dengan batang)
- * - Jalur taman (garis tipis)
- */
 function drawPark(b, col) {
   const { x, y, w, h, treeCount, treeSeed } = b;
 
@@ -544,6 +1462,84 @@ function drawWater(b, col) {
   }
 }
 
+// ===================== MIDPOINT CIRCLE ALGORITHM =====================
+/**
+ * midpointCircle(cx, cy, r, color, fill)
+ * Menggambar lingkaran menggunakan Algoritma Midpoint Circle
+ * (Bresenham's Circle Algorithm) — murni operasi integer
+ * tanpa fungsi trigonometri (sin/cos) atau ctx.arc().
+ *
+ * Prinsip:
+ *   Mulai dari titik (0, r) — puncak lingkaran.
+ *   Decision parameter awal: p = 1 - r
+ *
+ *   Setiap langkah x bertambah 1:
+ *     jika p < 0  → p_baru = p + 2x + 3         (y tetap)
+ *     jika p >= 0 → p_baru = p + 2x - 2y + 5    (y turun 1)
+ *
+ *   Manfaatkan simetri 8 oktan: setiap titik (x,y) yang dihitung
+ *   langsung menghasilkan 8 titik simetris pada lingkaran.
+ *
+ *   Untuk mengisi (fill), gambar garis horizontal antara
+ *   titik-titik simetris kiri dan kanan di setiap baris y.
+ *
+ * @param {number} cx    - Koordinat x pusat lingkaran
+ * @param {number} cy    - Koordinat y pusat lingkaran
+ * @param {number} r     - Radius lingkaran (integer)
+ * @param {string} color - Warna lingkaran
+ * @param {boolean} fill - true = isi penuh, false = hanya tepi
+ */
+function midpointCircle(cx, cy, r, color, fill = true) {
+  cx = Math.round(cx);
+  cy = Math.round(cy);
+  r  = Math.round(r);
+
+  let x = 0;
+  let y = r;
+  let p = 1 - r; // decision parameter awal
+
+  ctx.fillStyle   = color;
+  ctx.strokeStyle = color;
+
+  // Fungsi bantu: gambar 8 titik simetris dari satu titik (x, y)
+  // atau 4 garis horizontal untuk mode fill
+  function plot8(x, y) {
+    if (fill) {
+      // Isi lingkaran: gambar garis horizontal antara titik simetris
+      // Setiap pasang titik simetris membentuk segmen horizontal
+      ctx.fillRect(cx - x, cy + y, 2 * x, 1); // bawah
+      ctx.fillRect(cx - x, cy - y, 2 * x, 1); // atas
+      ctx.fillRect(cx - y, cy + x, 2 * y, 1); // kiri-kanan tengah bawah
+      ctx.fillRect(cx - y, cy - x, 2 * y, 1); // kiri-kanan tengah atas
+    } else {
+      // Hanya tepi: gambar 8 titik simetris
+      ctx.fillRect(cx + x, cy + y, 1, 1);
+      ctx.fillRect(cx - x, cy + y, 1, 1);
+      ctx.fillRect(cx + x, cy - y, 1, 1);
+      ctx.fillRect(cx - x, cy - y, 1, 1);
+      ctx.fillRect(cx + y, cy + x, 1, 1);
+      ctx.fillRect(cx - y, cy + x, 1, 1);
+      ctx.fillRect(cx + y, cy - x, 1, 1);
+      ctx.fillRect(cx - y, cy - x, 1, 1);
+    }
+  }
+
+  // Loop dari x=0 sampai x=y (oktan pertama, sisanya via simetri)
+  while (x <= y) {
+    plot8(x, y);
+
+    if (p < 0) {
+      // Titik midpoint di dalam lingkaran → y tetap
+      p += 2 * x + 3;
+    } else {
+      // Titik midpoint di luar lingkaran → y turun 1
+      y--;
+      p += 2 * x - 2 * y + 5;
+    }
+    x++;
+  }
+}
+
 // ===================== DRAWING: SIDEWALK =====================
 /**
  * drawSidewalks()
@@ -590,6 +1586,12 @@ function drawFlag(x, y, color) {
 }
 
 // ===================== DRAWING: MOVING OBJECT =====================
+// KONVENSI ORIENTASI:
+//   obj.angle = atan2(dy, dx) = sudut arah gerak di canvas
+//   Semua kendaraan digambar dengan hidung menghadap +X (kanan)
+//   ctx.rotate(obj.angle) otomatis memutar ke arah gerak
+//   Ukuran kendaraan: panjang ~22s, lebar ~12s
+//   Jalan lebar 30 unit -> kendaraan muat di dalam lajur
 function drawMovingObj(obj) {
   const col = getColors();
   ctx.save();
@@ -598,63 +1600,121 @@ function drawMovingObj(obj) {
   const s = 1 / zoom;
 
   if (obj.type === 'car') {
-    // Bodi mobil
-    ctx.fillStyle = col.objCar;
+    // Mobil top-down, hidung ke +X
+    // Panjang (sumbu X): 22s, Lebar (sumbu Y): 12s
+    const carColors = [col.objCar, col.objCar2, col.objCar3, col.objCar4];
+    const cc = carColors[(obj.colorIdx || 0) % 4];  // colorIdx tetap sejak spawn
+    const hl = 11*s, hw = 6*s;  // half-length, half-width
+
+    // Bayangan (offset kanan-bawah)
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
     ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(-13 * s, -7 * s, 26 * s, 14 * s, 3 * s);
-    else ctx.rect(-13 * s, -7 * s, 26 * s, 14 * s);
+    if (ctx.roundRect) ctx.roundRect(-hl+s, -hw+s, hl*2, hw*2, 3*s);
+    else ctx.rect(-hl+s, -hw+s, hl*2, hw*2);
     ctx.fill();
-    // Kaca depan
-    ctx.fillStyle = 'rgba(200,230,255,0.85)';
+
+    // Bodi
+    ctx.fillStyle = cc;
     ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(-4 * s, -6 * s, 11 * s, 5 * s, 1 * s);
-    else ctx.rect(-4 * s, -6 * s, 11 * s, 5 * s);
+    if (ctx.roundRect) ctx.roundRect(-hl, -hw, hl*2, hw*2, 3*s);
+    else ctx.rect(-hl, -hw, hl*2, hw*2);
     ctx.fill();
-    // Roda
-    ctx.fillStyle = '#1a1a1a';
-    for (const [wx, wy] of [[-8, 7], [-8, -7], [8, 7], [8, -7]]) {
-      ctx.beginPath(); ctx.arc(wx * s, wy * s, 3.5 * s, 0, Math.PI * 2); ctx.fill();
+
+    // Atap gelap (tengah bodi)
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(-hl*0.25, -hw+1.5*s, hl*1.0, hw*2-3*s, 2*s);
+    else ctx.rect(-hl*0.25, -hw+1.5*s, hl*1.0, hw*2-3*s);
+    ctx.fill();
+
+    // Kaca depan (+X)
+    ctx.fillStyle = 'rgba(180,225,255,0.9)';
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(hl*0.2, -hw+2*s, hl*0.55, hw*2-4*s, 2*s);
+    else ctx.rect(hl*0.2, -hw+2*s, hl*0.55, hw*2-4*s);
+    ctx.fill();
+
+    // Kaca belakang (-X)
+    ctx.fillStyle = 'rgba(180,225,255,0.55)';
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(-hl*0.75, -hw+2*s, hl*0.35, hw*2-4*s, 1.5*s);
+    else ctx.rect(-hl*0.75, -hw+2*s, hl*0.35, hw*2-4*s);
+    ctx.fill();
+
+    // 4 roda (sudut bodi)
+    const rL = 4*s, rW = 2.5*s;
+    for (const [rx,ry] of [
+      [ hl*0.55, -hw-rW/2],   // kanan depan atas
+      [ hl*0.55,  hw-rL+rW/2],// kanan depan bawah
+      [-hl*0.7,  -hw-rW/2],   // kiri belakang atas
+      [-hl*0.7,   hw-rL+rW/2],// kiri belakang bawah
+    ]) {
+      ctx.fillStyle = '#111'; ctx.fillRect(rx, ry, rL, rW);
+      ctx.fillStyle = '#444'; ctx.fillRect(rx+0.8*s, ry+0.5*s, rL-1.6*s, rW-1*s);
     }
-    // Lampu depan
-    ctx.fillStyle = '#FFD700';
-    ctx.beginPath(); ctx.arc(13 * s, 0, 2 * s, 0, Math.PI * 2); ctx.fill();
+
+    // Lampu depan kuning (+X)
+    ctx.fillStyle = '#FFE055';
+    ctx.fillRect(hl-1*s, -hw+0.5*s, 2*s, 2*s);
+    ctx.fillRect(hl-1*s,  hw-2.5*s, 2*s, 2*s);
+
+    // Lampu belakang merah (-X)
+    ctx.fillStyle = '#FF2020';
+    ctx.fillRect(-hl-1*s, -hw+0.5*s, 2*s, 2*s);
+    ctx.fillRect(-hl-1*s,  hw-2.5*s, 2*s, 2*s);
 
   } else if (obj.type === 'moto') {
+    // Motor, hidung ke +X, panjang 18s lebar 7s
     ctx.fillStyle = col.objMoto;
-    ctx.beginPath(); ctx.ellipse(0, 0, 10 * s, 4 * s, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#1a1a1a';
-    ctx.beginPath(); ctx.arc(-9 * s, 4 * s, 4 * s, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc( 9 * s, 4 * s, 4 * s, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = col.objMoto;
-    ctx.beginPath(); ctx.arc(0, -9 * s, 4 * s, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#444';
-    ctx.beginPath(); ctx.arc(0, -9 * s, 5 * s, Math.PI, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(-9*s, -3.5*s, 18*s, 7*s, 2.5*s);
+    else ctx.rect(-9*s, -3.5*s, 18*s, 7*s);
+    ctx.fill();
+    // Roda depan dan belakang
+    ctx.fillStyle = '#111';
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(6*s, -3*s, 5*s, 6*s, 1.5*s);
+    else ctx.rect(6*s, -3*s, 5*s, 6*s);
+    ctx.fill();
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(-11*s, -3*s, 5*s, 6*s, 1.5*s);
+    else ctx.rect(-11*s, -3*s, 5*s, 6*s);
+    ctx.fill();
+    // Helm pengendara
+    ctx.fillStyle = '#eecc44';
+    ctx.beginPath(); ctx.arc(0, 0, 3.5*s, 0, Math.PI*2); ctx.fill();
 
   } else if (obj.type === 'bike') {
+    // Sepeda, hidung ke +X
     ctx.strokeStyle = col.objBike;
-    ctx.lineWidth   = 2 * s;
+    ctx.lineWidth   = 1.8*s;
     ctx.lineCap     = 'round';
-    ctx.beginPath(); ctx.arc(-8 * s, 5 * s, 6 * s, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.arc( 8 * s, 5 * s, 6 * s, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(-8 * s, 5 * s); ctx.lineTo(0, -5 * s); ctx.lineTo(8 * s, 5 * s);
-    ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, -5 * s); ctx.lineTo(0, -12 * s); ctx.stroke();
+    // Rangka
+    ctx.beginPath(); ctx.moveTo(-8*s,0); ctx.lineTo(8*s,0); ctx.stroke();
+    // Roda depan & belakang
+    ctx.beginPath(); ctx.arc( 7*s, 0, 4.5*s, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(-7*s, 0, 4.5*s, 0, Math.PI*2); ctx.stroke();
+    // Setang depan
+    ctx.beginPath(); ctx.moveTo(7*s,-3.5*s); ctx.lineTo(7*s,3.5*s); ctx.stroke();
+    // Pengendara
     ctx.fillStyle = col.objBike;
-    ctx.beginPath(); ctx.arc(0, -14 * s, 4 * s, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 0, 3*s, 0, Math.PI*2); ctx.fill();
 
   } else {
-    // Pejalan kaki dengan animasi langkah
+    // Pejalan kaki, hidung ke +X
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath(); ctx.ellipse(1.5*s, 0, 4.5*s, 3*s, 0, 0, Math.PI*2); ctx.fill();
+    // Tubuh
     ctx.fillStyle = col.objPed;
-    ctx.beginPath(); ctx.arc(0, -14 * s, 4.5 * s, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = col.objPed;
-    ctx.lineWidth   = 2.5 * s;
-    ctx.lineCap     = 'round';
-    ctx.beginPath(); ctx.moveTo(0, -9 * s); ctx.lineTo(0, 3 * s); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(-7 * s, -3 * s); ctx.lineTo(7 * s, -3 * s); ctx.stroke();
-    const legSwing = Math.sin(animT * 0.3) * 8 * s;
-    ctx.beginPath(); ctx.moveTo(0, 3 * s); ctx.lineTo(-legSwing, 13 * s); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, 3 * s); ctx.lineTo( legSwing, 13 * s); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, 4*s, 0, Math.PI*2); ctx.fill();
+    // Kepala (sisi +X)
+    ctx.fillStyle = '#f5c8a0';
+    ctx.beginPath(); ctx.arc(2.5*s, 0, 2.5*s, 0, Math.PI*2); ctx.fill();
+    // Kaki (animasi atas-bawah)
+    const step = Math.sin(animT * 0.3) * 3*s;
+    ctx.fillStyle = col.objPed;
+    ctx.beginPath(); ctx.ellipse(-2*s, -step, 1.5*s, 2.8*s, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(-2*s,  step, 1.5*s, 2.8*s, 0, 0, Math.PI*2); ctx.fill();
   }
 
   ctx.restore();
@@ -670,17 +1730,21 @@ function drawMap() {
   ctx.fillStyle = col.bg;
   ctx.fillRect(0, 0, W, H);
 
-  // Grid halus
-  ctx.strokeStyle = col.grid;
-  ctx.lineWidth   = 1;
+  // Grid halus — digambar menggunakan Algoritma Bresenham
+  // Grid berada di screen space (sebelum ctx.translate world),
+  // sehingga bresenhamLine dipanggil langsung di koordinat layar.
+  // Setiap garis grid adalah garis lurus horisontal/vertikal
+  // yang ideal untuk mendemonstrasikan Bresenham pada sumbu tunggal.
   const gs = 100 * zoom;
   const ox = ((-camX * zoom) + W / 2) % gs;
   const oy = ((-camY * zoom) + H / 2) % gs;
+  const gridColor = col.grid;
+  // Bresenham bekerja di ruang piksel integer — bulatkan koordinat awal
   for (let x = ox; x < W; x += gs) {
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    bresenhamLine(Math.round(x), 0, Math.round(x), H, gridColor, 1);
   }
   for (let y = oy; y < H; y += gs) {
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    bresenhamLine(0, Math.round(y), W, Math.round(y), gridColor, 1);
   }
 
   // Masuk koordinat dunia
@@ -689,13 +1753,7 @@ function drawMap() {
   ctx.scale(zoom, zoom);
   ctx.translate(-camX, -camY);
 
-  // 1. Trotoar (paling bawah, di bawah bangunan)
-  drawSidewalks();
-
-  // 2. Blok tata kota (bangunan, taman, air)
-  drawCityBlocks();
-
-  // 3. Lapisan tepi jalan (gelap)
+  // 1. Trotoar lebar di kiri-kanan jalan (digambar paling bawah)
   ctx.lineCap  = 'round';
   ctx.lineJoin = 'round';
   for (const e of edges) {
@@ -705,12 +1763,28 @@ function drawMap() {
     ctx.beginPath();
     ctx.moveTo(A.x, A.y);
     ctx.quadraticCurveTo(cp.x, cp.y, B.x, B.y);
-    ctx.strokeStyle = col.road;
-    ctx.lineWidth   = 20;
+    ctx.strokeStyle = col.sidewalk;
+    ctx.lineWidth   = 28;
     ctx.stroke();
   }
 
-  // 4. Permukaan jalan (lebih terang)
+  // 2. Blok tata kota (bangunan, taman, air)
+  drawCityBlocks();
+
+  // 3. Border aspal gelap (tepi jalan)
+  for (const e of edges) {
+    const A  = nodes[e.a];
+    const B  = nodes[e.b];
+    const cp = getEdgeCP(e);
+    ctx.beginPath();
+    ctx.moveTo(A.x, A.y);
+    ctx.quadraticCurveTo(cp.x, cp.y, B.x, B.y);
+    ctx.strokeStyle = col.road;
+    ctx.lineWidth   = 22;
+    ctx.stroke();
+  }
+
+  // 4. Permukaan aspal (lebih terang)
   for (const e of edges) {
     const A  = nodes[e.a];
     const B  = nodes[e.b];
@@ -719,50 +1793,55 @@ function drawMap() {
     ctx.moveTo(A.x, A.y);
     ctx.quadraticCurveTo(cp.x, cp.y, B.x, B.y);
     ctx.strokeStyle = col.roadSurf;
-    ctx.lineWidth   = 14;
+    ctx.lineWidth   = 16;
     ctx.stroke();
   }
 
-  // 5. Marka garis tengah jalan (putus-putus)
-  ctx.setLineDash([14, 14]);
+  // 5. Marka garis tengah jalan (putus-putus) — dashedCurve() manual
   for (const e of edges) {
-    const A  = nodes[e.a];
-    const B  = nodes[e.b];
-    const cp = getEdgeCP(e);
-    ctx.beginPath();
-    ctx.moveTo(A.x, A.y);
-    ctx.quadraticCurveTo(cp.x, cp.y, B.x, B.y);
-    ctx.strokeStyle = col.roadMark;
-    ctx.lineWidth   = 1.5;
-    ctx.stroke();
+    const A   = nodes[e.a];
+    const B   = nodes[e.b];
+    const cp  = getEdgeCP(e);
+    const pts = [];
+    for (let t = 0; t <= 1; t += 0.05) {
+      const u = 1 - t;
+      pts.push({
+        x: u * u * A.x + 2 * u * t * cp.x + t * t * B.x,
+        y: u * u * A.y + 2 * u * t * cp.y + t * t * B.y,
+      });
+    }
+    dashedCurve(pts, 10, 10, col.roadMark, 1.5);
   }
-  ctx.setLineDash([]);
 
-  // 6. Highlight jalur BFS
+    // 6. Highlight jalur A* — menggunakan dashedCurve() manual
   if (pathPts.length > 1) {
-    ctx.beginPath();
-    ctx.moveTo(pathPts[0].x, pathPts[0].y);
-    for (let i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].x, pathPts[i].y);
-    ctx.strokeStyle = col.pathLine;
-    ctx.lineWidth   = 6;
-    ctx.lineCap     = 'round';
-    ctx.lineJoin    = 'round';
-    ctx.setLineDash([16, 10]);
     ctx.globalAlpha = 0.8;
-    ctx.stroke();
+    dashedCurve(pathPts, 16, 10, col.pathLine, 6);
     ctx.globalAlpha = 1;
-    ctx.setLineDash([]);
   }
 
-  // 7. Persimpangan (node dots)
+  // 7a. Bundaran — gambar lebih dulu agar tertimpa elemen di atasnya
   for (const n of nodes) {
-    ctx.beginPath();
-    ctx.arc(n.x, n.y, 7, 0, Math.PI * 2);
-    ctx.fillStyle = col.roadSurf;
-    ctx.fill();
-    ctx.strokeStyle = col.road;
-    ctx.lineWidth   = 1.5;
-    ctx.stroke();
+    if (n.isRoundabout) drawRoundabout(n, col);
+  }
+
+  // 7b. Persimpangan biasa — Midpoint Circle proporsional dengan lebar jalan
+  // Jalan lebar 40 world unit, radius persimpangan = 16 agar menutup pertemuan jalan
+  for (const n of nodes) {
+    if (n.isRoundabout) continue;
+    midpointCircle(n.x, n.y, 9, col.road, true);      // border gelap
+    midpointCircle(n.x, n.y, 7, col.roadSurf, true);  // permukaan aspal
+  }
+
+  // 7c. Tanda silang Bresenham di persimpangan biasa
+  const crossSize = 10;
+  const crossW    = 2;
+  for (const n of nodes) {
+    if (n.isRoundabout) continue;
+    const nx = Math.round(n.x);
+    const ny = Math.round(n.y);
+    bresenhamLine(nx - crossSize, ny - crossSize, nx + crossSize, ny + crossSize, col.nodeDot, crossW);
+    bresenhamLine(nx - crossSize, ny + crossSize, nx + crossSize, ny - crossSize, col.nodeDot, crossW);
   }
 
   // 8. Bendera awal & tujuan
@@ -819,20 +1898,51 @@ function resetButtons() {
 
 // ===================== EVENT LISTENERS =====================
 canvas.addEventListener('mousedown', e => {
-  dragging = true; lastMX = e.clientX; lastMY = e.clientY;
+  if (is3D) {
+    drag3D = true;
+    drag3DPan = e.button === 2 || e.altKey;
+    last3DMX = e.clientX; last3DMY = e.clientY;
+  } else {
+    dragging = true; lastMX = e.clientX; lastMY = e.clientY;
+  }
   canvas.classList.add('grabbing');
 });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('mousemove', e => {
+  if (is3D && drag3D) {
+    const dx = e.clientX - last3DMX;
+    const dy = e.clientY - last3DMY;
+    if (drag3DPan) {
+      // Pan: geser target kamera
+      const speed = cam3D.r * 0.001;
+      cam3D.tx -= Math.cos(cam3D.theta) * dx * speed;
+      cam3D.tz -= Math.sin(cam3D.theta) * dx * speed;
+      cam3D.tx += Math.sin(cam3D.theta) * dy * speed * 0.5;
+      cam3D.tz -= Math.cos(cam3D.theta) * dy * speed * 0.5;
+    } else {
+      // Orbit: putar kamera
+      cam3D.theta -= dx * 0.006;
+      cam3D.phi    = Math.max(0.15, Math.min(Math.PI*0.48, cam3D.phi - dy * 0.006));
+    }
+    last3DMX = e.clientX; last3DMY = e.clientY;
+    return;
+  }
   if (!dragging) return;
   camX -= (e.clientX - lastMX) / zoom;
   camY -= (e.clientY - lastMY) / zoom;
   clampCam(); lastMX = e.clientX; lastMY = e.clientY;
 });
-canvas.addEventListener('mouseup',    () => { dragging = false; canvas.classList.remove('grabbing'); });
-canvas.addEventListener('mouseleave', () => { dragging = false; canvas.classList.remove('grabbing'); });
+canvas.addEventListener('mouseup',    () => { dragging = false; drag3D = false; canvas.classList.remove('grabbing'); });
+canvas.addEventListener('mouseleave', () => { dragging = false; drag3D = false; canvas.classList.remove('grabbing'); });
 
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
+  if (is3D) {
+    // 3D zoom: ubah jarak kamera (r)
+    const factor = e.deltaY > 0 ? 1.12 : 0.89;
+    cam3D.r = Math.max(300, Math.min(8000, cam3D.r * factor));
+    return;
+  }
   const delta = e.deltaY > 0 ? -0.08 : 0.08;
   const rect  = canvas.getBoundingClientRect();
   const mx    = e.clientX - rect.left;
@@ -892,10 +2002,11 @@ document.getElementById('btn-start').addEventListener('click', () => {
   animRunning  = true;
   animPaused   = false;
   movingObj = {
-    type:  selectedType,
-    x:     pathPts[0] ? pathPts[0].x : nodes[startNode].x,
-    y:     pathPts[0] ? pathPts[0].y : nodes[startNode].y,
-    angle: 0,
+    type:     selectedType,
+    x:        pathPts[0] ? pathPts[0].x : nodes[startNode].x,
+    y:        pathPts[0] ? pathPts[0].y : nodes[startNode].y,
+    angle:    0,
+    colorIdx: Math.floor(Math.random() * 4),  // warna tetap selama perjalanan
   };
   document.getElementById('btn-start').style.display = 'none';
   document.getElementById('btn-pause').style.display = '';
@@ -906,6 +2017,31 @@ document.getElementById('btn-pause').addEventListener('click', () => {
   document.getElementById('btn-pause').textContent = animPaused ? '▶ Resume' : '⏸ Pause';
 });
 
+// Toggle 2D/3D
+document.getElementById('btn-3d').addEventListener('click', () => {
+  is3D = !is3D;
+  const btn = document.getElementById('btn-3d');
+  const info2d = document.getElementById('info');
+  const info3d = document.getElementById('info3d');
+  if (is3D) {
+    btn.classList.add('active');
+    btn.textContent = '🧊 2D';
+    info2d.style.display = 'none';
+    info3d.style.display = '';
+    // Reset orbit camera ke posisi awal
+    cam3D.theta = -Math.PI / 4;
+    cam3D.phi   = Math.PI / 3;
+    cam3D.r     = 3200;
+    cam3D.tx    = 0;
+    cam3D.tz    = 0;
+  } else {
+    btn.classList.remove('active');
+    btn.textContent = '🧊 3D';
+    info2d.style.display = '';
+    info3d.style.display = 'none';
+  }
+});
+
 window.addEventListener('resize', () => {
   W = window.innerWidth; H = window.innerHeight;
   canvas.width = W; canvas.height = H;
@@ -914,7 +2050,8 @@ window.addEventListener('resize', () => {
 // ===================== MAIN LOOP =====================
 function loop() {
   stepAnim();
-  drawMap();
+  if (is3D) drawMap3D();
+  else drawMap();
   requestAnimationFrame(loop);
 }
 
