@@ -89,29 +89,46 @@ function isDark() {
 function getColors() {
   const d = isDark();
   return {
+    // Ground warm off-white
     bg:               d ? '#1c1a16' : '#f0ede6',
     grid:             d ? 'rgba(255,255,255,0.03)' : '#e8e3da',
+
+    // Roads — white with crisp border
     road:             d ? '#2a2826' : '#c4c0b8',
     roadSurf:         d ? '#3a3835' : '#ffffff',
     roadMark:         d ? '#504c48' : '#dedad2',
     nodeDot:          d ? '#2a2826' : '#c4c0b8',
+
+    // Sidewalk — warm tan
     sidewalk:         d ? '#2e2c28' : '#dedad2',
+
+    // Buildings — muted flat colors
     building:         d ? '#2a3040' : '#dde2ec',
     buildingTop:      d ? '#363d50' : '#ccd2e0',
     buildingWin:      d ? '#5080c0' : '#aabee0',
     buildingShadow:   'rgba(0,0,0,0.08)',
+
+    // Parks — soft sage green
     park:             d ? '#1c2e1c' : '#dce8d4',
     parkTree:         d ? '#243828' : '#b8d0aa',
     parkGround:       d ? '#1c2e1c' : '#c4d8b8',
+
+    // Water — pale slate blue
     water:            d ? '#1a2830' : '#d4e8f4',
     waterRipple:      d ? '#1e3040' : '#bcd8ec',
     waterShine:       d ? '#243848' : '#cce0f0',
+
+    // Roundabout
     roundaboutRing:   d ? '#2a2826' : '#c4c0b8',
     roundaboutIsland: d ? '#1c2e1c' : '#dce8d4',
     roundaboutTree:   d ? '#243828' : '#b8d0aa',
+
+    // Markers
     flagG:        '#16a34a',
     flagR:        '#dc2626',
     pathLine:     '#2563eb',
+
+    // Vehicles
     objCar:       '#2563eb',
     objCar2:      '#dc2626',
     objCar3:      '#d97706',
@@ -425,51 +442,37 @@ function drawMap3D() {
   const col = getColors();
   updateCamera3D();
 
-  // Background — sama dengan 2D
-  ctx.fillStyle = col.bg;
+  // Background
+  const isDk = isDark();
+  ctx.fillStyle = isDk ? '#1a2030' : '#c8dfc8';
   ctx.fillRect(0, 0, W, H);
-
-  // Grid subtle
-  ctx.strokeStyle = col.grid;
-  ctx.lineWidth   = 0.5;
-  const gs = 100 * (W / MAP_W);
-  for (let x = 0; x < W; x += gs * 8) {
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-  }
-  for (let y = 0; y < H; y += gs * 8) {
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-  }
 
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
 
   // 1. Trotoar
   for (const e of edges) {
     const A=nodes[e.a], B=nodes[e.b], cp=getEdgeCP(e);
-    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 0, col.sidewalk, 34);
+    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 0, col.sidewalk, 28);
   }
-
   // 2. Border jalan
   for (const e of edges) {
     const A=nodes[e.a], B=nodes[e.b], cp=getEdgeCP(e);
-    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 1, col.road, 26);
+    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 1, col.road, 22);
   }
-
-  // 3. Permukaan aspal
+  // 3. Aspal
   for (const e of edges) {
     const A=nodes[e.a], B=nodes[e.b], cp=getEdgeCP(e);
-    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 2, col.roadSurf, 20);
+    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 2, col.roadSurf, 16);
   }
-
-  // 4. Marka jalan (dashed manual)
+  // 4. Marka
   for (const e of edges) {
     const A=nodes[e.a], B=nodes[e.b], cp=getEdgeCP(e);
     const pts=[];
-    for (let t=0;t<=1;t+=0.02) {
+    for (let t=0;t<=1;t+=0.05) {
       const u=1-t;
       pts.push({x:u*u*A.x+2*u*t*cp.x+t*t*B.x, y:u*u*A.y+2*u*t*cp.y+t*t*B.y});
     }
     let draw=true, acc=0;
-    const dashLen = e.curved ? 8 : 12;
     for (let i=1;i<pts.length;i++) {
       const p1=projH(pts[i-1].x,pts[i-1].y,3);
       const p2=projH(pts[i].x,pts[i].y,3);
@@ -477,98 +480,74 @@ function drawMap3D() {
       acc+=Math.hypot(p2.x-p1.x,p2.y-p1.y);
       if (draw) {
         ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y);
-        ctx.strokeStyle=col.roadMark; ctx.lineWidth=2; ctx.stroke();
+        ctx.strokeStyle=col.roadMark; ctx.lineWidth=1.5; ctx.stroke();
       }
-      if (acc>dashLen) { draw=!draw; acc=0; }
+      if (acc>8) { draw=!draw; acc=0; }
     }
   }
 
-  // 5. Taman & Air (flat ground)
+  // 5. Taman & Air (flat)
   for (const b of cityBlocks) {
     const C=[{x:b.x,y:b.y},{x:b.x+b.w,y:b.y},{x:b.x+b.w,y:b.y+b.h},{x:b.x,y:b.y+b.h}];
     if (b.type==='park') {
       poly3D(C, 1, col.park, col.parkTree, 0.5);
-      // Pohon 3D sederhana
+      // Pohon sederhana
       const rng = makeRng(b.treeSeed||42);
-      for (let k=0;k<Math.min(b.treeCount||3,5);k++) {
+      for (let k=0;k<Math.min(b.treeCount||3,4);k++) {
         const tx=b.x+rng()*b.w, ty=b.y+rng()*b.h;
-        const tBase=proj2D(tx,ty), tTop=projH(tx,ty,70);
+        const tBase=proj2D(tx,ty), tTop=projH(tx,ty,60);
         if (tBase.visible) {
-          // Batang
           ctx.beginPath(); ctx.moveTo(tBase.x,tBase.y); ctx.lineTo(tTop.x,tTop.y);
-          ctx.strokeStyle='#8a7a60'; ctx.lineWidth=2; ctx.stroke();
-          // Mahkota
-          const cr = Math.max(5, 10);
-          ctx.beginPath(); ctx.arc(tTop.x,tTop.y,cr,0,Math.PI*2);
+          ctx.strokeStyle='#7a5a28'; ctx.lineWidth=2; ctx.stroke();
+          ctx.beginPath(); ctx.arc(tTop.x,tTop.y,Math.max(4,8),0,Math.PI*2);
           ctx.fillStyle=col.parkTree; ctx.fill();
-          ctx.beginPath(); ctx.arc(tTop.x-cr*0.2,tTop.y-cr*0.2,cr*0.6,0,Math.PI*2);
-          ctx.fillStyle=col.parkGround; ctx.fill();
         }
       }
     } else if (b.type==='water') {
       poly3D(C, 1, col.water, col.waterRipple, 0.5);
-      // Riak air
-      const wc = proj2D(b.x+b.w/2, b.y+b.h/2);
-      if (wc.visible) {
-        ctx.beginPath(); ctx.arc(wc.x, wc.y, Math.max(4,8), 0, Math.PI*2);
-        ctx.strokeStyle=col.waterRipple; ctx.lineWidth=1; ctx.stroke();
-      }
     }
   }
 
-  // 6. Bangunan (ekstrusi 3D, Painter's Algorithm)
+  // 6. Bangunan (sort Painter's Algorithm: terjauh dulu)
   const buildings = cityBlocks.filter(b=>b.type==='building');
   buildings.sort((a,b) => {
     const da = proj2D(a.x+a.w/2, a.y+a.h/2).w;
     const db = proj2D(b.x+b.w/2, b.y+b.h/2).w;
-    return da - db; // terjauh dulu
+    return da - db;
   });
   for (const b of buildings) extrudeBuilding3D(b, col);
 
   // 7. Bundaran
   for (const n of nodes) {
     if (!n.isRoundabout) continue;
-    const r=n.roundaboutRadius, ri=r*0.50;
-    const SEGS=20;
+    const r=n.roundaboutRadius, ri=r*0.42;
+    const SEGS=16;
     const outer=[], inner=[];
     for (let k=0;k<SEGS;k++) {
       const a=(k/SEGS)*Math.PI*2;
-      outer.push({x:n.x+Math.cos(a)*r, y:n.y+Math.sin(a)*r});
-      inner.push({x:n.x+Math.cos(a)*ri,y:n.y+Math.sin(a)*ri});
+      outer.push({x:n.x+Math.cos(a)*r,  y:n.y+Math.sin(a)*r });
+      inner.push({x:n.x+Math.cos(a)*ri, y:n.y+Math.sin(a)*ri});
     }
-    poly3D(outer, 2, col.road, col.road, 0.5);
-    poly3D(outer, 2, col.roadSurf, null, 0);
-    poly3D(inner, 5, col.park, col.parkTree, 0.5);
-
-    if (n.isMainRoundabout) {
-      // Air mancur bundaran utama
-      const fr = Math.max(5, Math.round(ri*0.30));
-      const fC  = [];
-      for (let k=0;k<16;k++) {
-        const a=(k/16)*Math.PI*2;
-        fC.push({x:n.x+Math.cos(a)*fr, y:n.y+Math.sin(a)*fr});
-      }
-      poly3D(fC, 6, col.water, col.waterRipple, 0.5);
-      // Semburan air
-      const fTop = projH(n.x, n.y, fr*4);
-      const fBot = projH(n.x, n.y, 5);
-      if (fBot.visible) {
-        ctx.beginPath(); ctx.moveTo(fBot.x,fBot.y); ctx.lineTo(fTop.x,fTop.y);
-        ctx.strokeStyle=col.waterShine; ctx.lineWidth=2; ctx.stroke();
-        ctx.beginPath(); ctx.arc(fTop.x, fTop.y, 4, 0, Math.PI*2);
-        ctx.fillStyle=col.waterShine; ctx.fill();
-      }
+    poly3D(outer, 2, col.roadSurf, col.road, 0.5);
+    poly3D(inner, 4, col.park, col.parkTree, 0.5);
+    const tTop=projH(n.x, n.y, ri*3);
+    const tBase=proj2D(n.x, n.y);
+    if (tBase.visible) {
+      ctx.beginPath(); ctx.moveTo(tBase.x,tBase.y); ctx.lineTo(tTop.x,tTop.y);
+      ctx.strokeStyle='#7a5a28'; ctx.lineWidth=1.5; ctx.stroke();
+      ctx.beginPath(); ctx.arc(tTop.x,tTop.y,Math.max(3,ri*0.3),0,Math.PI*2);
+      ctx.fillStyle=col.parkTree; ctx.fill();
     }
   }
 
-  // 8. Persimpangan biasa
+  // 8. Persimpangan
   for (const n of nodes) {
     if (n.isRoundabout) continue;
-    const SEGS=12, pts=[], pts2=[];
+    const SEGS=10, pts=[], pts2=[];
     for (let k=0;k<SEGS;k++) {
       const a=(k/SEGS)*Math.PI*2;
-      pts.push({x:n.x+Math.cos(a)*12, y:n.y+Math.sin(a)*12});
-      pts2.push({x:n.x+Math.cos(a)*10,y:n.y+Math.sin(a)*10});
+      pts.push({x:n.x+Math.cos(a)*9, y:n.y+Math.sin(a)*9});
+      pts2.push({x:n.x+Math.cos(a)*7,y:n.y+Math.sin(a)*7});
     }
     poly3D(pts,  2, col.road, null, 0);
     poly3D(pts2, 2, col.roadSurf, null, 0);
@@ -582,7 +561,7 @@ function drawMap3D() {
       if (!p1.visible||!p2.visible) continue;
       ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y);
       ctx.strokeStyle=col.pathLine; ctx.lineWidth=2.5;
-      ctx.globalAlpha=0.9; ctx.stroke(); ctx.globalAlpha=1;
+      ctx.globalAlpha=0.85; ctx.stroke(); ctx.globalAlpha=1;
     }
   }
 
@@ -591,25 +570,16 @@ function drawMap3D() {
   if (nodes[endNode])   drawFlag3D(nodes[endNode].x,   nodes[endNode].y,   col.flagR);
   if (movingObj) drawMovingObj3D(movingObj, col);
 
-  // 11. HUD kamera
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.strokeStyle = '#e4e0da';
-  ctx.lineWidth = 1;
-  const hw = 200, hh = 28, hx = W/2 - hw/2, hy = H - 48;
-  ctx.beginPath();
-  if (ctx.roundRect) ctx.roundRect(hx, hy, hw, hh, 6);
-  else ctx.rect(hx, hy, hw, hh);
-  ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#888';
-  ctx.font = '11px -apple-system, sans-serif';
-  ctx.textAlign = 'center';
+  // 11. HUD info kamera
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(10, H-38, 220, 26);
+  ctx.fillStyle = '#fff';
+  ctx.font = '11px monospace';
   ctx.fillText(
-    `theta ${(cam3D.theta*180/Math.PI).toFixed(0)}\u00b0  |  phi ${(cam3D.phi*180/Math.PI).toFixed(0)}\u00b0  |  zoom ${cam3D.r.toFixed(0)}`,
-    W/2, hy + 18
+    `3D | theta:${(cam3D.theta*180/Math.PI).toFixed(0)}\u00b0 phi:${(cam3D.phi*180/Math.PI).toFixed(0)}\u00b0 r:${cam3D.r.toFixed(0)}`,
+    16, H-21
   );
-  ctx.textAlign = 'left';
 }
-
 
 // ===================== UTILITIES =====================
 function rnd(a, b)    { return a + Math.random() * (b - a); }
