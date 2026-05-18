@@ -89,38 +89,39 @@ function isDark() {
 function getColors() {
   const d = isDark();
   return {
-    bg:               d ? '#242f3e' : '#e8f0e0',
-    grid:             'rgba(0,0,0,0.04)',
-    road:             d ? '#38414e' : '#a8b0a8',
-    roadSurf:         d ? '#485060' : '#d4d8d4',
-    roadMark:         '#ffffff',
-    nodeDot:          d ? '#38414e' : '#a8b0a8',
-    sidewalk:         d ? '#4a4030' : '#e0d8c0',
-    building:         d ? '#2a3040' : '#c0b8a8',
-    buildingTop:      d ? '#363d50' : '#d0c8b8',
-    buildingWin:      d ? '#5080c0' : '#88b8e8',
-    buildingShadow:   'rgba(0,0,0,0.15)',
-    park:             d ? '#1a3020' : '#98c888',
-    parkTree:         d ? '#1e4028' : '#60a850',
-    parkGround:       d ? '#162818' : '#a8d890',
-    water:            d ? '#17263c' : '#90b8d8',
-    waterRipple:      d ? '#1e3048' : '#a8cce8',
-    waterShine:       d ? '#243858' : '#b8daf0',
-    roundaboutRing:   d ? '#38414e' : '#a8b0a8',
-    roundaboutIsland: d ? '#1a3020' : '#98c888',
-    roundaboutTree:   d ? '#1e4028' : '#60a850',
-    flagG:        '#22cc44',
-    flagR:        '#ee2222',
-    pathLine:     '#4a90e2',
-    objCar:       '#3366ee',
-    objCar2:      '#ee3333',
-    objCar3:      '#ee9900',
-    objCar4:      '#22aa44',
-    objMoto:      '#ff6622',
-    objBike:      '#22bb44',
-    objPed:       '#9944ee',
+    bg:               d ? '#1c1a16' : '#f0ede6',
+    grid:             d ? 'rgba(255,255,255,0.03)' : '#e8e3da',
+    road:             d ? '#2a2826' : '#c4c0b8',
+    roadSurf:         d ? '#3a3835' : '#ffffff',
+    roadMark:         d ? '#504c48' : '#dedad2',
+    nodeDot:          d ? '#2a2826' : '#c4c0b8',
+    sidewalk:         d ? '#2e2c28' : '#dedad2',
+    building:         d ? '#2a3040' : '#dde2ec',
+    buildingTop:      d ? '#363d50' : '#ccd2e0',
+    buildingWin:      d ? '#5080c0' : '#aabee0',
+    buildingShadow:   'rgba(0,0,0,0.08)',
+    park:             d ? '#1c2e1c' : '#dce8d4',
+    parkTree:         d ? '#243828' : '#b8d0aa',
+    parkGround:       d ? '#1c2e1c' : '#c4d8b8',
+    water:            d ? '#1a2830' : '#d4e8f4',
+    waterRipple:      d ? '#1e3040' : '#bcd8ec',
+    waterShine:       d ? '#243848' : '#cce0f0',
+    roundaboutRing:   d ? '#2a2826' : '#c4c0b8',
+    roundaboutIsland: d ? '#1c2e1c' : '#dce8d4',
+    roundaboutTree:   d ? '#243828' : '#b8d0aa',
+    flagG:        '#16a34a',
+    flagR:        '#dc2626',
+    pathLine:     '#2563eb',
+    objCar:       '#2563eb',
+    objCar2:      '#dc2626',
+    objCar3:      '#d97706',
+    objCar4:      '#16a34a',
+    objMoto:      '#d97706',
+    objBike:      '#16a34a',
+    objPed:       '#7c3aed',
   };
 }
+
 
 // ===================== 3D ENGINE: MATRIX & PROJECTION =====================
 /**
@@ -424,37 +425,51 @@ function drawMap3D() {
   const col = getColors();
   updateCamera3D();
 
-  // Background
-  const isDk = isDark();
-  ctx.fillStyle = isDk ? '#1a2030' : '#c8dfc8';
+  // Background — sama dengan 2D
+  ctx.fillStyle = col.bg;
   ctx.fillRect(0, 0, W, H);
+
+  // Grid subtle
+  ctx.strokeStyle = col.grid;
+  ctx.lineWidth   = 0.5;
+  const gs = 100 * (W / MAP_W);
+  for (let x = 0; x < W; x += gs * 8) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let y = 0; y < H; y += gs * 8) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
 
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
 
   // 1. Trotoar
   for (const e of edges) {
     const A=nodes[e.a], B=nodes[e.b], cp=getEdgeCP(e);
-    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 0, col.sidewalk, 28);
+    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 0, col.sidewalk, 34);
   }
+
   // 2. Border jalan
   for (const e of edges) {
     const A=nodes[e.a], B=nodes[e.b], cp=getEdgeCP(e);
-    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 1, col.road, 22);
+    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 1, col.road, 26);
   }
-  // 3. Aspal
+
+  // 3. Permukaan aspal
   for (const e of edges) {
     const A=nodes[e.a], B=nodes[e.b], cp=getEdgeCP(e);
-    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 2, col.roadSurf, 16);
+    bezier3D(A.x,A.y,cp.x,cp.y,B.x,B.y, 2, col.roadSurf, 20);
   }
-  // 4. Marka
+
+  // 4. Marka jalan (dashed manual)
   for (const e of edges) {
     const A=nodes[e.a], B=nodes[e.b], cp=getEdgeCP(e);
     const pts=[];
-    for (let t=0;t<=1;t+=0.05) {
+    for (let t=0;t<=1;t+=0.02) {
       const u=1-t;
       pts.push({x:u*u*A.x+2*u*t*cp.x+t*t*B.x, y:u*u*A.y+2*u*t*cp.y+t*t*B.y});
     }
     let draw=true, acc=0;
+    const dashLen = e.curved ? 8 : 12;
     for (let i=1;i<pts.length;i++) {
       const p1=projH(pts[i-1].x,pts[i-1].y,3);
       const p2=projH(pts[i].x,pts[i].y,3);
@@ -462,74 +477,98 @@ function drawMap3D() {
       acc+=Math.hypot(p2.x-p1.x,p2.y-p1.y);
       if (draw) {
         ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y);
-        ctx.strokeStyle=col.roadMark; ctx.lineWidth=1.5; ctx.stroke();
+        ctx.strokeStyle=col.roadMark; ctx.lineWidth=2; ctx.stroke();
       }
-      if (acc>8) { draw=!draw; acc=0; }
+      if (acc>dashLen) { draw=!draw; acc=0; }
     }
   }
 
-  // 5. Taman & Air (flat)
+  // 5. Taman & Air (flat ground)
   for (const b of cityBlocks) {
     const C=[{x:b.x,y:b.y},{x:b.x+b.w,y:b.y},{x:b.x+b.w,y:b.y+b.h},{x:b.x,y:b.y+b.h}];
     if (b.type==='park') {
       poly3D(C, 1, col.park, col.parkTree, 0.5);
-      // Pohon sederhana
+      // Pohon 3D sederhana
       const rng = makeRng(b.treeSeed||42);
-      for (let k=0;k<Math.min(b.treeCount||3,4);k++) {
+      for (let k=0;k<Math.min(b.treeCount||3,5);k++) {
         const tx=b.x+rng()*b.w, ty=b.y+rng()*b.h;
-        const tBase=proj2D(tx,ty), tTop=projH(tx,ty,60);
+        const tBase=proj2D(tx,ty), tTop=projH(tx,ty,70);
         if (tBase.visible) {
+          // Batang
           ctx.beginPath(); ctx.moveTo(tBase.x,tBase.y); ctx.lineTo(tTop.x,tTop.y);
-          ctx.strokeStyle='#7a5a28'; ctx.lineWidth=2; ctx.stroke();
-          ctx.beginPath(); ctx.arc(tTop.x,tTop.y,Math.max(4,8),0,Math.PI*2);
+          ctx.strokeStyle='#8a7a60'; ctx.lineWidth=2; ctx.stroke();
+          // Mahkota
+          const cr = Math.max(5, 10);
+          ctx.beginPath(); ctx.arc(tTop.x,tTop.y,cr,0,Math.PI*2);
           ctx.fillStyle=col.parkTree; ctx.fill();
+          ctx.beginPath(); ctx.arc(tTop.x-cr*0.2,tTop.y-cr*0.2,cr*0.6,0,Math.PI*2);
+          ctx.fillStyle=col.parkGround; ctx.fill();
         }
       }
     } else if (b.type==='water') {
       poly3D(C, 1, col.water, col.waterRipple, 0.5);
+      // Riak air
+      const wc = proj2D(b.x+b.w/2, b.y+b.h/2);
+      if (wc.visible) {
+        ctx.beginPath(); ctx.arc(wc.x, wc.y, Math.max(4,8), 0, Math.PI*2);
+        ctx.strokeStyle=col.waterRipple; ctx.lineWidth=1; ctx.stroke();
+      }
     }
   }
 
-  // 6. Bangunan (sort Painter's Algorithm: terjauh dulu)
+  // 6. Bangunan (ekstrusi 3D, Painter's Algorithm)
   const buildings = cityBlocks.filter(b=>b.type==='building');
   buildings.sort((a,b) => {
     const da = proj2D(a.x+a.w/2, a.y+a.h/2).w;
     const db = proj2D(b.x+b.w/2, b.y+b.h/2).w;
-    return da - db;
+    return da - db; // terjauh dulu
   });
   for (const b of buildings) extrudeBuilding3D(b, col);
 
   // 7. Bundaran
   for (const n of nodes) {
     if (!n.isRoundabout) continue;
-    const r=n.roundaboutRadius, ri=r*0.42;
-    const SEGS=16;
+    const r=n.roundaboutRadius, ri=r*0.50;
+    const SEGS=20;
     const outer=[], inner=[];
     for (let k=0;k<SEGS;k++) {
       const a=(k/SEGS)*Math.PI*2;
-      outer.push({x:n.x+Math.cos(a)*r,  y:n.y+Math.sin(a)*r });
-      inner.push({x:n.x+Math.cos(a)*ri, y:n.y+Math.sin(a)*ri});
+      outer.push({x:n.x+Math.cos(a)*r, y:n.y+Math.sin(a)*r});
+      inner.push({x:n.x+Math.cos(a)*ri,y:n.y+Math.sin(a)*ri});
     }
-    poly3D(outer, 2, col.roadSurf, col.road, 0.5);
-    poly3D(inner, 4, col.park, col.parkTree, 0.5);
-    const tTop=projH(n.x, n.y, ri*3);
-    const tBase=proj2D(n.x, n.y);
-    if (tBase.visible) {
-      ctx.beginPath(); ctx.moveTo(tBase.x,tBase.y); ctx.lineTo(tTop.x,tTop.y);
-      ctx.strokeStyle='#7a5a28'; ctx.lineWidth=1.5; ctx.stroke();
-      ctx.beginPath(); ctx.arc(tTop.x,tTop.y,Math.max(3,ri*0.3),0,Math.PI*2);
-      ctx.fillStyle=col.parkTree; ctx.fill();
+    poly3D(outer, 2, col.road, col.road, 0.5);
+    poly3D(outer, 2, col.roadSurf, null, 0);
+    poly3D(inner, 5, col.park, col.parkTree, 0.5);
+
+    if (n.isMainRoundabout) {
+      // Air mancur bundaran utama
+      const fr = Math.max(5, Math.round(ri*0.30));
+      const fC  = [];
+      for (let k=0;k<16;k++) {
+        const a=(k/16)*Math.PI*2;
+        fC.push({x:n.x+Math.cos(a)*fr, y:n.y+Math.sin(a)*fr});
+      }
+      poly3D(fC, 6, col.water, col.waterRipple, 0.5);
+      // Semburan air
+      const fTop = projH(n.x, n.y, fr*4);
+      const fBot = projH(n.x, n.y, 5);
+      if (fBot.visible) {
+        ctx.beginPath(); ctx.moveTo(fBot.x,fBot.y); ctx.lineTo(fTop.x,fTop.y);
+        ctx.strokeStyle=col.waterShine; ctx.lineWidth=2; ctx.stroke();
+        ctx.beginPath(); ctx.arc(fTop.x, fTop.y, 4, 0, Math.PI*2);
+        ctx.fillStyle=col.waterShine; ctx.fill();
+      }
     }
   }
 
-  // 8. Persimpangan
+  // 8. Persimpangan biasa
   for (const n of nodes) {
     if (n.isRoundabout) continue;
-    const SEGS=10, pts=[], pts2=[];
+    const SEGS=12, pts=[], pts2=[];
     for (let k=0;k<SEGS;k++) {
       const a=(k/SEGS)*Math.PI*2;
-      pts.push({x:n.x+Math.cos(a)*9, y:n.y+Math.sin(a)*9});
-      pts2.push({x:n.x+Math.cos(a)*7,y:n.y+Math.sin(a)*7});
+      pts.push({x:n.x+Math.cos(a)*12, y:n.y+Math.sin(a)*12});
+      pts2.push({x:n.x+Math.cos(a)*10,y:n.y+Math.sin(a)*10});
     }
     poly3D(pts,  2, col.road, null, 0);
     poly3D(pts2, 2, col.roadSurf, null, 0);
@@ -543,7 +582,7 @@ function drawMap3D() {
       if (!p1.visible||!p2.visible) continue;
       ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y);
       ctx.strokeStyle=col.pathLine; ctx.lineWidth=2.5;
-      ctx.globalAlpha=0.85; ctx.stroke(); ctx.globalAlpha=1;
+      ctx.globalAlpha=0.9; ctx.stroke(); ctx.globalAlpha=1;
     }
   }
 
@@ -552,16 +591,25 @@ function drawMap3D() {
   if (nodes[endNode])   drawFlag3D(nodes[endNode].x,   nodes[endNode].y,   col.flagR);
   if (movingObj) drawMovingObj3D(movingObj, col);
 
-  // 11. HUD info kamera
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(10, H-38, 220, 26);
-  ctx.fillStyle = '#fff';
-  ctx.font = '11px monospace';
+  // 11. HUD kamera
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.strokeStyle = '#e4e0da';
+  ctx.lineWidth = 1;
+  const hw = 200, hh = 28, hx = W/2 - hw/2, hy = H - 48;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(hx, hy, hw, hh, 6);
+  else ctx.rect(hx, hy, hw, hh);
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#888';
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.textAlign = 'center';
   ctx.fillText(
-    `3D | theta:${(cam3D.theta*180/Math.PI).toFixed(0)}\u00b0 phi:${(cam3D.phi*180/Math.PI).toFixed(0)}\u00b0 r:${cam3D.r.toFixed(0)}`,
-    16, H-21
+    `theta ${(cam3D.theta*180/Math.PI).toFixed(0)}\u00b0  |  phi ${(cam3D.phi*180/Math.PI).toFixed(0)}\u00b0  |  zoom ${cam3D.r.toFixed(0)}`,
+    W/2, hy + 18
   );
+  ctx.textAlign = 'left';
 }
+
 
 // ===================== UTILITIES =====================
 function rnd(a, b)    { return a + Math.random() * (b - a); }
@@ -683,51 +731,76 @@ function generateMap() {
   cityBlocks  = [];
   roundabouts = new Set();
 
-  const cols = 9;
-  const rows = 7;
-  const gw   = MAP_W / (cols + 1);
-  const gh   = MAP_H / (rows + 1);
+  // Pusat peta = lokasi bundaran utama
+  const CX = MAP_W / 2;
+  const CY = MAP_H / 2;
 
-  // Tempatkan simpul dengan jitter koordinat
+  // ── GRID NODE 7x5 dengan jitter sedang ──
+  // Grid rapi tapi sedikit organik (jitter 10%)
+  const cols = 7;
+  const rows = 5;
+  const gw   = MAP_W / (cols + 1);  // ~667
+  const gh   = MAP_H / (rows + 1);  // ~714
+
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
+      // Node tengah (baris 2, col 3) = pusat kota
+      // Jitter lebih kecil di dekat pusat
+      const distToCenter = Math.hypot(
+        (c + 1) - (cols + 1) / 2,
+        (r + 1) - (rows + 1) / 2
+      );
+      const jit = 0.06 + distToCenter * 0.025;
       nodes.push({
         id:  r * cols + c,
-        x:   gw * (c + 1) + rnd(-gw * 0.2, gw * 0.2),
-        y:   gh * (r + 1) + rnd(-gh * 0.2, gh * 0.2),
+        x:   gw * (c + 1) + rnd(-gw * jit, gw * jit),
+        y:   gh * (r + 1) + rnd(-gh * jit, gh * jit),
         adj: [],
         isRoundabout: false,
       });
     }
   }
 
-  // Spanning tree: horizontal + vertikal
+  // ── EDGE: Horizontal + Vertikal ──
+  // ~35% edge melengkung (sedang)
+  const curveRng = makeRng(Math.floor(Math.random() * 99999));
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const i = r * cols + c;
-      if (c < cols - 1) addEdge(i, r * cols + c + 1);
-      if (r < rows - 1) addEdge(i, (r + 1) * cols + c);
+      if (c < cols - 1) {
+        const j = r * cols + c + 1;
+        edges.push({ a: i, b: j, curved: curveRng() < 0.35 });
+        nodes[i].adj.push(j);
+        nodes[j].adj.push(i);
+      }
+      if (r < rows - 1) {
+        const j = (r + 1) * cols + c;
+        edges.push({ a: i, b: j, curved: curveRng() < 0.35 });
+        nodes[i].adj.push(j);
+        nodes[j].adj.push(i);
+      }
     }
   }
 
-  // Edge diagonal (~50% dari jumlah node) → jalan mayoritas tidak lurus
-  const diagCount = Math.floor(nodes.length * 0.5);
-  for (let k = 0; k < diagCount; k++) {
-    const r = rndInt(0, rows - 2);
-    const c = rndInt(0, cols - 2);
-    const i = r * cols + c;
-    addEdge(i, (r + 1) * cols + c + 1);
-    if (Math.random() < 0.5) {
-      addEdge(r * cols + c + 1, (r + 1) * cols + c);
-    }
+  // ── BUNDARAN UTAMA: node tengah grid ──
+  // Paksa node tengah menjadi bundaran utama dengan radius besar
+  const centerIdx = Math.floor(rows / 2) * cols + Math.floor(cols / 2);
+  const centerNode = nodes[centerIdx];
+  // Radius bundaran utama = 18% dari jarak ke tetangga
+  let minDistCenter = Infinity;
+  for (const adjIdx of centerNode.adj) {
+    minDistCenter = Math.min(minDistCenter,
+      Math.hypot(nodes[adjIdx].x - centerNode.x, nodes[adjIdx].y - centerNode.y));
   }
+  centerNode.isRoundabout    = true;
+  centerNode.roundaboutRadius = Math.min(55, minDistCenter * 0.22);
+  centerNode.isMainRoundabout = true;  // tandai sebagai bundaran utama
+  roundabouts.add(centerNode.id);
 
-  // Deteksi dan tandai node perempatan sebagai bundaran
-  detectRoundabouts();
+  // Bundaran kecil di perempatan lain (max 4, adj==4)
+  detectRoundaboutsSecondary(centerIdx);
 
-  // Generate blok tata kota
   generateCityBlocks(cols, rows, gw, gh);
-
   randomPositions();
 }
 
@@ -744,152 +817,153 @@ function generateMap() {
  * bundaran (jarak antar bundaran minimal 2x radius) agar
  * tidak tumpang tindih secara visual.
  */
-function detectRoundabouts() {
-  roundabouts = new Set();
-  // Reset semua node
-  for (const n of nodes) n.isRoundabout = false;
+// detectRoundabouts() tidak dipakai langsung
+// Bundaran utama ditentukan di generateMap()
+// Bundaran sekunder ditentukan di sini
+function detectRoundabouts() {}
 
-  // Pilih hanya node perempatan TEPAT 4 arah (paling cocok jadi bundaran)
-  // Jika kurang dari 5, tambah dari node adj>=5 dengan adj terbanyak
-  const MAX_ROUNDABOUTS = 6;
+function detectRoundaboutsSecondary(skipIdx) {
+  // Pilih max 4 bundaran kecil dari node adj==4
+  // Kecuali node tengah (sudah jadi bundaran utama)
+  const MAX   = 4;
+  const MDIST = 800;
+  const seed  = makeRng(Math.floor(Math.random() * 99999));
+  const cands = nodes
+    .filter(n => n.adj.length === 4 && n.id !== skipIdx)
+    .sort(() => seed() - 0.5);
 
-  // Sort kandidat: prioritaskan adj==4, lalu adj==5, dst
-  const candidates = nodes
-    .filter(n => n.adj.length >= 4)
-    .sort((a, b) => {
-      // adj==4 paling diutamakan (perempatan 4 arah)
-      const da = Math.abs(a.adj.length - 4);
-      const db = Math.abs(b.adj.length - 4);
-      return da - db;
-    });
-
-  const placed = [];
-  const MIN_DIST = 800; // jarak minimum antar bundaran (world unit)
-
-  for (const n of candidates) {
-    if (placed.length >= MAX_ROUNDABOUTS) break;
-
-    // Cek jarak ke bundaran yang sudah ada
-    const tooClose = placed.some(p => Math.hypot(p.x - n.x, p.y - n.y) < MIN_DIST);
+  const placed = [nodes[skipIdx]]; // hindari terlalu dekat bundaran utama
+  for (const n of cands) {
+    if (placed.length - 1 >= MAX) break;
+    const tooClose = placed.some(
+      p => Math.hypot(p.x - n.x, p.y - n.y) < MDIST
+    );
     if (tooClose) continue;
-
-    // Hitung radius proporsional dengan jarak ke tetangga
-    let totalDist = 0;
-    for (const adjIdx of n.adj) {
-      const nb = nodes[adjIdx];
-      totalDist += Math.hypot(nb.x - n.x, nb.y - n.y);
-    }
-    const avgDist = totalDist / n.adj.length;
-    n.roundaboutRadius = Math.min(10, avgDist * 0.06);
-    n.isRoundabout = true;
+    let minD = Infinity;
+    for (const ai of n.adj)
+      minD = Math.min(minD, Math.hypot(nodes[ai].x-n.x, nodes[ai].y-n.y));
+    n.roundaboutRadius = Math.min(16, minD * 0.18);
+    n.isRoundabout     = true;
     roundabouts.add(n.id);
     placed.push(n);
   }
 }
 
-// ===================== DRAWING: ROUNDABOUT =====================
-/**
- * drawRoundabout(node)
- * Menggambar visual bundaran pada node perempatan.
- * Menggunakan midpointCircle() untuk:
- *   1. Lingkaran luar (batas bundaran) — tepi jalan
- *   2. Lingkaran tengah (pulau bundaran) — area hijau/taman
- *   3. Garis putus-putus busur — marka jalan bundaran
- *
- * Radius bundaran sudah dihitung di detectRoundabouts().
- */
 function drawRoundabout(node, col) {
-  const cx = node.x;
-  const cy = node.y;
+  const cx = node.x, cy = node.y;
   const r  = node.roundaboutRadius;
-  const ri = r * 0.42; // radius pulau tengah
+  const ri = r * 0.50;
 
-  // 1. Permukaan jalan bundaran (aspal)
-  midpointCircle(cx, cy, r, col.roadSurf, true);
+  if (node.isMainRoundabout) {
+    // ══ BUNDARAN UTAMA: lebih besar, ada air mancur ══
+    // Permukaan jalan bundaran
+    midpointCircle(cx, cy, r, col.road, true);
+    midpointCircle(cx, cy, r - 2, col.roadSurf, true);
 
-  // 2. Trotoar/border luar bundaran (krem)
-  midpointCircle(cx, cy, r,     col.road, false);
-  midpointCircle(cx, cy, r + 1, col.road, false);
-  midpointCircle(cx, cy, r + 2, col.sidewalk, false);
+    // Border luar
+    midpointCircle(cx, cy, r,     col.road, false);
+    midpointCircle(cx, cy, r + 1, col.road, false);
+    midpointCircle(cx, cy, r + 2, col.sidewalk, false);
 
-  // 3. Pulau tengah bundaran — hijau taman
-  midpointCircle(cx, cy, ri, col.park, true);
+    // Pulau taman hijau
+    midpointCircle(cx, cy, ri, col.park, true);
+    midpointCircle(cx, cy, ri, col.road, false);
 
-  // 4. Border pulau tengah
-  midpointCircle(cx, cy, ri,     col.road, false);
-  midpointCircle(cx, cy, ri + 1, col.road, false);
+    // Pohon mengelilingi tepi pulau
+    const treeR = Math.max(5, Math.round(ri * 0.22));
+    const NTREE = 8;
+    for (let k = 0; k < NTREE; k++) {
+      const ang = (k / NTREE) * Math.PI * 2;
+      const tx  = Math.round(cx + Math.cos(ang) * ri * 0.65);
+      const ty  = Math.round(cy + Math.sin(ang) * ri * 0.65);
+      midpointCircle(tx, ty, treeR, col.parkTree, true);
+      midpointCircle(tx, ty, Math.max(2, Math.round(treeR * 0.5)),
+                     col.parkGround, true);
+    }
 
-  // 5. Pohon di pulau tengah
-  const treeR = Math.max(4, Math.round(ri * 0.4));
-  midpointCircle(cx, cy, treeR, col.parkTree, true);
+    // Air mancur di tengah
+    const fr = Math.max(6, Math.round(ri * 0.30));
+    midpointCircle(cx, cy, fr, col.water, true);
+    midpointCircle(cx, cy, Math.max(3, Math.round(fr * 0.55)),
+                   col.waterShine, true);
+    midpointCircle(cx, cy, Math.max(2, Math.round(fr * 0.25)),
+                   '#ffffff', true);
 
-  // 6. Highlight pohon (lingkaran kecil terang di tengah)
-  const hlR = Math.max(2, Math.round(treeR * 0.45));
-  midpointCircle(cx, cy - Math.round(hlR * 0.3), hlR, col.park, true);
+    // Marka putus-putus di bundaran
+    midpointCircle(cx, cy, Math.round(r * 0.80), 'rgba(255,255,255,0.3)', false);
+
+  } else {
+    // ══ BUNDARAN KECIL biasa ══
+    midpointCircle(cx, cy, r, col.road, true);
+    midpointCircle(cx, cy, r - 1, col.roadSurf, true);
+    midpointCircle(cx, cy, r,     col.road, false);
+    midpointCircle(cx, cy, r + 1, col.sidewalk, false);
+    midpointCircle(cx, cy, ri, col.park, true);
+    midpointCircle(cx, cy, ri, col.road, false);
+    const treeR = Math.max(3, Math.round(ri * 0.42));
+    midpointCircle(cx, cy, treeR, col.parkTree, true);
+    midpointCircle(cx, cy, Math.max(2, Math.round(treeR * 0.45)),
+                   col.parkGround, true);
+  }
 }
 
 function generateCityBlocks(cols, rows, gw, gh) {
   const rngType = makeRng(Math.floor(Math.random() * 9999));
   const rngSize = makeRng(Math.floor(Math.random() * 9999));
-  const rngOff  = makeRng(Math.floor(Math.random() * 9999));
+  const rngTree = makeRng(Math.floor(Math.random() * 9999));
+
+  // Node tengah = bundaran utama, blok di sekelilingnya lebih kecil
+  const centerR = Math.floor(rows / 2);
+  const centerC = Math.floor(cols / 2);
 
   for (let r = 0; r < rows - 1; r++) {
     for (let c = 0; c < cols - 1; c++) {
-      // Pusat sel (antara 4 node sudut sel ini)
+      // Pusat sel dari 4 node sudut
       const n00 = nodes[r * cols + c];
-      const n10 = nodes[r * cols + c + 1];
-      const n01 = nodes[(r + 1) * cols + c];
+      const n01 = nodes[r * cols + c + 1];
+      const n10 = nodes[(r + 1) * cols + c];
       const n11 = nodes[(r + 1) * cols + c + 1];
 
-      const cx = (n00.x + n10.x + n01.x + n11.x) / 4;
-      const cy = (n00.y + n10.y + n01.y + n11.y) / 4;
+      const cellCX = (n00.x + n01.x + n10.x + n11.x) / 4;
+      const cellCY = (n00.y + n01.y + n10.y + n11.y) / 4;
+      const cellW  = Math.abs(n01.x - n00.x);
+      const cellH  = Math.abs(n10.y - n00.y);
 
-      // Lebar & tinggi sel (jarak antar node)
-      const cellW = Math.min(Math.abs(n10.x - n00.x), Math.abs(n11.x - n01.x));
-      const cellH = Math.min(Math.abs(n01.y - n00.y), Math.abs(n11.y - n10.y));
+      // Margin lebih besar di dekat bundaran utama
+      const isNearCenter =
+        (r === centerR - 1 || r === centerR) &&
+        (c === centerC - 1 || c === centerC);
+      const margin = isNearCenter ? 0.50 : 0.38;
+      const maxW   = cellW * (1 - margin * 2);
+      const maxH   = cellH * (1 - margin * 2);
 
-      // Sisakan margin dari jalan (~30% tiap sisi)
-      const margin  = 0.38;   // margin lebih jauh dari jalan
-      const maxBW   = cellW * (1 - margin * 2);
-      const maxBH   = cellH * (1 - margin * 2);
-      if (maxBW < 30 || maxBH < 30) continue;
+      if (maxW < 24 || maxH < 24) continue;
 
-      const t = rngType();
+      // Pojok peta = taman luas
+      const isCorner =
+        (r === 0 || r === rows - 2) &&
+        (c === 0 || c === cols - 2);
 
-      if (t < 0.55) {
-        // === BANGUNAN ===
-        // Satu blok bisa berisi 1-4 bangunan yang tersusun
-        const count = t < 0.25 ? 4 : t < 0.40 ? 2 : 1;
-        generateBuildingCluster(cx, cy, maxBW, maxBH, count, rngSize, rngOff);
-
-      } else if (t < 0.78) {
-        // === TAMAN ===
-        const pw = maxBW * (0.5 + rngSize() * 0.4);
-        const ph = maxBH * (0.5 + rngSize() * 0.4);
-        const ox = (rngOff() - 0.5) * maxBW * 0.2;
-        const oy = (rngOff() - 0.5) * maxBH * 0.2;
-        cityBlocks.push({
-          type: 'park',
-          x: cx - pw / 2 + ox,
-          y: cy - ph / 2 + oy,
-          w: pw, h: ph,
-          treeCount: rndInt(3, 8),
-          treeSeed: Math.floor(rngSize() * 9999),
-        });
-
+      let type;
+      if (isCorner) {
+        type = 'park'; // pojok selalu taman
       } else {
-        // === PERAIRAN ===
-        const ww = maxBW * (0.4 + rngSize() * 0.35);
-        const wh = maxBH * (0.4 + rngSize() * 0.35);
-        const ox = (rngOff() - 0.5) * maxBW * 0.15;
-        const oy = (rngOff() - 0.5) * maxBH * 0.15;
-        cityBlocks.push({
-          type: 'water',
-          x: cx - ww / 2 + ox,
-          y: cy - wh / 2 + oy,
-          w: ww, h: wh,
-        });
+        const t = rngType();
+        type = t < 0.55 ? 'building' : t < 0.80 ? 'park' : 'water';
       }
+
+      const bw = maxW * (0.55 + rngSize() * 0.30);
+      const bh = maxH * (0.55 + rngSize() * 0.30);
+
+      cityBlocks.push({
+        type,
+        x: cellCX - bw / 2,
+        y: cellCY - bh / 2,
+        w: bw, h: bh,
+        floors:    1 + Math.floor(rngSize() * 5),
+        treeCount: 2 + Math.floor(rngTree() * 4),
+        treeSeed:  Math.floor(rngTree() * 99999),
+      });
     }
   }
 }
@@ -1072,32 +1146,19 @@ function computePath() {
 }
 
 // ===================== BEZIER =====================
-// getEdgeControlPoint: formula IDENTIK dengan getEdgeCP
-// menggunakan ID node (a.id, b.id) sebagai seed
-// sehingga kurva jalur A* persis sama dengan kurva jalan yang digambar
+// getEdgeControlPoint: cari edge yang menghubungkan A-B
+// lalu gunakan getEdgeCP agar kurva jalur A* identik dengan jalan
 function getEdgeControlPoint(A, B) {
-  const mx   = (A.x + B.x) / 2;
-  const my   = (A.y + B.y) / 2;
-  const perp = Math.atan2(B.y - A.y, B.x - A.x) + Math.PI / 2;
-  // Seed identik dengan getEdgeCP: (a*31 + b*17) % 100
-  const ia   = A.id !== undefined ? A.id : 0;
-  const ib   = B.id !== undefined ? B.id : 0;
-  const seed = (((ia * 31 + ib * 17) % 100) - 50) * 0.8;
-  return { x: mx + Math.cos(perp) * seed, y: my + Math.sin(perp) * seed };
+  // Cari edge yang menghubungkan A dan B
+  const e = edges.find(
+    ed => (ed.a === A.id && ed.b === B.id) ||
+          (ed.a === B.id && ed.b === A.id)
+  );
+  if (e) return getEdgeCP(e);
+  // Fallback: midpoint (tidak melengkung)
+  return { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
 }
 
-/**
- * buildPathPts()
- * Membangun array titik animasi sepanjang jalur A*.
- * Jika jalur melewati node bundaran, sisipkan titik-titik
- * busur setengah lingkaran (arc) sebagai pengganti Bezier lurus.
- *
- * Prinsip arc bundaran:
- *   theta_masuk  = atan2(prev.y - cy, prev.x - cx)
- *   theta_keluar = atan2(next.y - cy, next.x - cx)
- *   Sweep searah jarum jam dari theta_masuk ke theta_keluar
- *   x(t) = cx + r * cos(t),  y(t) = cy + r * sin(t)
- */
 function buildPathPts() {
   pathPts = [];
 
@@ -1287,14 +1348,27 @@ function dashedCurve(pts, dashLen, gapLen, color, lineWidth) {
 }
 
 function getEdgeCP(e) {
-  const A    = nodes[e.a];
-  const B    = nodes[e.b];
-  const mx   = (A.x + B.x) / 2;
-  const my   = (A.y + B.y) / 2;
-  const perp = Math.atan2(B.y - A.y, B.x - A.x) + Math.PI / 2;
-  // Faktor 0.8 = kurva natural smooth, tidak terlalu ekstrem
-  const seed = (((e.a * 31 + e.b * 17) % 100) - 50) * 0.8;
-  return { x: mx + Math.cos(perp) * seed, y: my + Math.sin(perp) * seed };
+  const A  = nodes[e.a];
+  const B  = nodes[e.b];
+  const mx = (A.x + B.x) / 2;
+  const my = (A.y + B.y) / 2;
+
+  if (!e.curved) {
+    // Jalan lurus: control point di midpoint, Bezier tidak melengkung
+    return { x: mx, y: my };
+  }
+
+  // Jalan melengkung: geser control point ke samping (tegak lurus)
+  // Offset = 25% jarak edge, arah ditentukan dari seed deterministic
+  // sehingga konsisten setiap render tanpa simpan state
+  const perp   = Math.atan2(B.y - A.y, B.x - A.x) + Math.PI / 2;
+  const dist   = Math.hypot(B.x - A.x, B.y - A.y);
+  const factor = (((e.a * 31 + e.b * 17) % 100) / 100 - 0.5) * 0.5;
+  const offset = dist * factor;
+  return {
+    x: mx + Math.cos(perp) * offset,
+    y: my + Math.sin(perp) * offset,
+  };
 }
 
 // ===================== DRAWING: CITY BLOCKS =====================
@@ -1764,7 +1838,7 @@ function drawMap() {
     ctx.moveTo(A.x, A.y);
     ctx.quadraticCurveTo(cp.x, cp.y, B.x, B.y);
     ctx.strokeStyle = col.sidewalk;
-    ctx.lineWidth   = 28;
+    ctx.lineWidth   = 34;
     ctx.stroke();
   }
 
@@ -1780,7 +1854,7 @@ function drawMap() {
     ctx.moveTo(A.x, A.y);
     ctx.quadraticCurveTo(cp.x, cp.y, B.x, B.y);
     ctx.strokeStyle = col.road;
-    ctx.lineWidth   = 22;
+    ctx.lineWidth   = 26;
     ctx.stroke();
   }
 
@@ -1793,24 +1867,28 @@ function drawMap() {
     ctx.moveTo(A.x, A.y);
     ctx.quadraticCurveTo(cp.x, cp.y, B.x, B.y);
     ctx.strokeStyle = col.roadSurf;
-    ctx.lineWidth   = 16;
+    ctx.lineWidth   = 20;
     ctx.stroke();
   }
 
   // 5. Marka garis tengah jalan (putus-putus) — dashedCurve() manual
+  // Sampling t += 0.02 (50 titik) agar mengikuti kurva dengan mulus
   for (const e of edges) {
     const A   = nodes[e.a];
     const B   = nodes[e.b];
     const cp  = getEdgeCP(e);
     const pts = [];
-    for (let t = 0; t <= 1; t += 0.05) {
+    for (let t = 0; t <= 1; t += 0.02) {
       const u = 1 - t;
       pts.push({
         x: u * u * A.x + 2 * u * t * cp.x + t * t * B.x,
         y: u * u * A.y + 2 * u * t * cp.y + t * t * B.y,
       });
     }
-    dashedCurve(pts, 10, 10, col.roadMark, 1.5);
+    // Ukuran dash proporsional: jalan lurus dash lebih panjang
+    const dashLen = e.curved ? 8 : 12;
+    const gapLen  = e.curved ? 8 : 12;
+    dashedCurve(pts, dashLen, gapLen, col.roadMark, 2);
   }
 
     // 6. Highlight jalur A* — menggunakan dashedCurve() manual
@@ -1820,28 +1898,16 @@ function drawMap() {
     ctx.globalAlpha = 1;
   }
 
-  // 7a. Bundaran — gambar lebih dulu agar tertimpa elemen di atasnya
+  // 7a. Bundaran
   for (const n of nodes) {
     if (n.isRoundabout) drawRoundabout(n, col);
   }
 
-  // 7b. Persimpangan biasa — Midpoint Circle proporsional dengan lebar jalan
-  // Jalan lebar 40 world unit, radius persimpangan = 16 agar menutup pertemuan jalan
+  // 7b. Persimpangan biasa — Midpoint Circle
   for (const n of nodes) {
     if (n.isRoundabout) continue;
-    midpointCircle(n.x, n.y, 9, col.road, true);      // border gelap
-    midpointCircle(n.x, n.y, 7, col.roadSurf, true);  // permukaan aspal
-  }
-
-  // 7c. Tanda silang Bresenham di persimpangan biasa
-  const crossSize = 10;
-  const crossW    = 2;
-  for (const n of nodes) {
-    if (n.isRoundabout) continue;
-    const nx = Math.round(n.x);
-    const ny = Math.round(n.y);
-    bresenhamLine(nx - crossSize, ny - crossSize, nx + crossSize, ny + crossSize, col.nodeDot, crossW);
-    bresenhamLine(nx - crossSize, ny + crossSize, nx + crossSize, ny - crossSize, col.nodeDot, crossW);
+    midpointCircle(n.x, n.y, 12, col.road, true);
+    midpointCircle(n.x, n.y, 10, col.roadSurf, true);
   }
 
   // 8. Bendera awal & tujuan
@@ -2015,6 +2081,10 @@ document.getElementById('btn-start').addEventListener('click', () => {
 document.getElementById('btn-pause').addEventListener('click', () => {
   animPaused = !animPaused;
   document.getElementById('btn-pause').textContent = animPaused ? '▶ Resume' : '⏸ Pause';
+  const sp2 = document.getElementById('status-text');
+  if (sp2) sp2.textContent = animPaused ? 'Dijeda' : 'Animasi berjalan';
+  const sd2 = document.querySelector('.status-dot');
+  if (sd2) sd2.style.background = animPaused ? '#d97706' : '#2563eb';
 });
 
 // Toggle 2D/3D
@@ -2025,7 +2095,7 @@ document.getElementById('btn-3d').addEventListener('click', () => {
   const info3d = document.getElementById('info3d');
   if (is3D) {
     btn.classList.add('active');
-    btn.textContent = '🧊 2D';
+    btn.textContent = '🧊 Mode 2D';
     info2d.style.display = 'none';
     info3d.style.display = '';
     // Reset orbit camera ke posisi awal
@@ -2036,7 +2106,7 @@ document.getElementById('btn-3d').addEventListener('click', () => {
     cam3D.tz    = 0;
   } else {
     btn.classList.remove('active');
-    btn.textContent = '🧊 3D';
+    btn.textContent = '🧊 Mode 3D';
     info2d.style.display = '';
     info3d.style.display = 'none';
   }
